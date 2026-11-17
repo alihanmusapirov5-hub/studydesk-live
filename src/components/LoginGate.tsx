@@ -74,9 +74,11 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
         {/* Шапка */}
         <div className="px-6 py-5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-sm">
-              <QrCode className="w-5 h-5" />
-            </div>
+            <img
+              src="./favicon.svg"
+              alt="StudyDesk Logo"
+              className="w-10 h-10 rounded-xl shadow-sm"
+            />
             <div>
               <span className="text-base font-bold tracking-tight block">
                 StudyDesk Live
