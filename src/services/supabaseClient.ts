@@ -15,7 +15,8 @@ const DEFAULT_SUPABASE_URL = 'https://crtjsrvumbpmhqlulhjv.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNydGpzcnZ1bWJwbWhxbHVsaGp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4ODAwOTEsImV4cCI6MjExMDQ1NjA5MX0.3uqauPK3eETiCr5bwxhDUKRt2hKSx-LQ1JSNamSTc_o';
 
-export const SQL_SCHEMA_SCRIPT = `-- Скрипт создания таблиц в Supabase (уже выполнен автоматически!)
+export const SQL_SCHEMA_SCRIPT = `-- Все таблицы и политики уже созданы в вашем проекте studydesk-live!
+-- Этот скрипт можно выполнять повторно без ошибок:
 CREATE TABLE IF NOT EXISTS public.studydesk_state (
   id TEXT PRIMARY KEY DEFAULT 'school_main',
   payload JSONB NOT NULL,
@@ -24,6 +25,7 @@ CREATE TABLE IF NOT EXISTS public.studydesk_state (
 
 ALTER TABLE public.studydesk_state ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "studydesk_state_policy" ON public.studydesk_state;
 CREATE POLICY "studydesk_state_policy"
   ON public.studydesk_state FOR ALL
   TO anon, authenticated
