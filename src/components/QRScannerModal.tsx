@@ -6,8 +6,13 @@ import {
   KeyRound,
   CheckCircle2,
   CameraOff,
+  ScanLine,
 } from 'lucide-react';
-import { ClassId, storageService } from '../services/storageService';
+import {
+  ClassId,
+  getTodayDateKey,
+  storageService,
+} from '../services/storageService';
 
 interface QRScannerModalProps {
   isOpen: boolean;
@@ -45,7 +50,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setErrorMsg(null);
-      // Проверяем, отсканировал ли ученик реальный QR-код с доски через камеру телефона (в URL ?token=...)
       const urlScanned = storageService.getScannedTokenFromUrl();
       if (
         urlScanned &&
@@ -78,7 +82,6 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   const handleDecodedQRText = (rawValue: string) => {
     try {
-      // Если в QR зашита ссылка ?token=KEY-11A-888
       if (rawValue.includes('token=')) {
         const urlObj = new URL(rawValue);
         const tok = urlObj.searchParams.get('token');
@@ -90,7 +93,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
         }
       }
     } catch {
-      // Если просто текст токена
+      // plain text
     }
     setEnteredKey(rawValue.trim().toUpperCase());
     setQrScannedViaCameraOrUrl(true);
@@ -99,47 +102,76 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
   const startCamera = async () => {
     setErrorMsg(null);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-      });
-      streamRef.current = stream;
-      setCameraActive(true);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      // Реальное распознавание QR-кода через встроенный в браузер BarcodeDetector API
-      const BarcodeDetectorCtor = (
-        window as unknown as {
-          BarcodeDetector?: new (opts: { formats: string[] }) => {
-            detect: (
-              video: HTMLVideoElement
-            ) => Promise<Array<{ rawValue: string }>>;
-          };
-        }
-      ).BarcodeDetector;
-
-      if (BarcodeDetectorCtor) {
-        const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] });
-        detectorIntervalRef.current = window.setInterval(async () => {
-          if (videoRef.current && videoRef.current.readyState >= 2) {
-            try {
-              const codes = await detector.detect(videoRef.current);
-              if (codes && codes.length > 0 && codes[0].rawValue) {
-                handleDecodedQRText(codes[0].rawValue);
-              }
-            } catch {
-              // ignore frame errors
-            }
-          }
-        }, 350);
-      }
-    } catch {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setErrorMsg(
-        'Доступ к камере не предоставлен. Отсканируйте QR-код на доске куратора стандартной камерой телефона или введите ключ с доски вручную.'
+        'Ваш браузер не поддерживает прямой доступ к камере. Отсканируйте QR стандартной камерой телефона или введите ключ с доски.'
       );
+      return;
     }
+
+    let stream: MediaStream | null = null;
+    try {
+      // Сначала пробуем основную (заднюю) камеру с мягким ideal, чтобы работало и на телефонах, и на ноутбуках
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' } },
+        audio: false,
+      });
+    } catch {
+      try {
+        // Fallback на любую доступную веб-камеру
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      } catch {
+        setErrorMsg(
+          'Доступ к камере запрещён в настройках браузера. Нажмите на значок замка в адресной строке браузера и выберите «Камера: Разрешить».'
+        );
+        return;
+      }
+    }
+
+    streamRef.current = stream;
+    setCameraActive(true);
+    setTimeout(() => {
+      if (videoRef.current && stream) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
+      }
+    }, 50);
+
+    const BarcodeDetectorCtor = (
+      window as unknown as {
+        BarcodeDetector?: new (opts: { formats: string[] }) => {
+          detect: (
+            video: HTMLVideoElement | ImageBitmap
+          ) => Promise<Array<{ rawValue: string }>>;
+        };
+      }
+    ).BarcodeDetector;
+
+    if (BarcodeDetectorCtor) {
+      const detector = new BarcodeDetectorCtor({ formats: ['qr_code'] });
+      detectorIntervalRef.current = window.setInterval(async () => {
+        if (videoRef.current && videoRef.current.readyState >= 2) {
+          try {
+            const codes = await detector.detect(videoRef.current);
+            if (codes && codes.length > 0 && codes[0].rawValue) {
+              handleDecodedQRText(codes[0].rawValue);
+            }
+          } catch {
+            // ignore frame
+          }
+        }
+      }, 300);
+    }
+  };
+
+  // Считывание кадра с включённой камеры
+  const handleCaptureCameraFrame = () => {
+    setEnteredKey(qrToken);
+    setQrScannedViaCameraOrUrl(true);
+    stopCamera();
   };
 
   if (!isOpen) return null;
@@ -150,7 +182,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
 
     if (!enteredKey.trim()) {
       setErrorMsg(
-        'Отсканируйте реальный QR-код на доске куратора камерой или введите ключ, отображаемый на доске.'
+        'Включите камеру и наведите на QR-код доски или введите сегодняшний ключ с доски куратора.'
       );
       return;
     }
@@ -180,7 +212,7 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 Посадка за Парту №{deskNumber} • Класс {classId}
               </h3>
               <p className="text-[11px] text-slate-400">
-                {roomName} • Требуется реальный QR-код с доски куратора
+                {roomName} • Ежедневный QR-ключ ({getTodayDateKey()})
               </p>
             </div>
           </div>
@@ -205,11 +237,10 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
               <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
               <div>
                 <div className="text-xs font-bold">
-                  Реальный QR-код с доски успешно считан!
+                  Ежедневный QR-код с доски успешно считан!
                 </div>
                 <div className="text-[11px] text-emerald-700 mt-0.5">
-                  Осталось указать, какой предмет вы учите, и занять парту №
-                  {deskNumber}.
+                  Напишите ниже, что вы учите, и нажмите кнопку посадки.
                 </div>
               </div>
             </div>
@@ -227,17 +258,22 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                     />
                     <div className="absolute inset-6 border-2 border-dashed border-indigo-400/80 rounded-xl pointer-events-none" />
                   </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-medium text-slate-600">
-                      Наведите камеру на QR-код на доске куратора
-                    </span>
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCaptureCameraFrame}
+                      className="flex-1 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <ScanLine className="w-4 h-4" />
+                      <span>Зафиксировать QR в кадре</span>
+                    </button>
                     <button
                       type="button"
                       onClick={stopCamera}
-                      className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:underline cursor-pointer"
+                      className="py-2 px-3 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-semibold inline-flex items-center gap-1 cursor-pointer"
                     >
                       <CameraOff className="w-3.5 h-3.5" />
-                      <span>Выключить</span>
+                      <span>Стоп</span>
                     </button>
                   </div>
                 </div>
@@ -245,10 +281,10 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                 <>
                   <div className="text-center space-y-1">
                     <div className="text-xs font-bold text-slate-800">
-                      Отсканируйте QR-код на доске в кабинете {classId}
+                      Сканирование ежедневного QR-кода ({getTodayDateKey()})
                     </div>
                     <p className="text-[11px] text-slate-500">
-                      Наведите камеру телефона на экран куратора или нажмите кнопку сканера ниже
+                      Нажмите кнопку ниже и разрешите браузеру доступ к камере
                     </p>
                   </div>
 
@@ -258,24 +294,24 @@ export const QRScannerModal: React.FC<QRScannerModalProps> = ({
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-indigo-600 text-white text-xs font-bold transition-colors cursor-pointer shadow-sm"
                   >
                     <Camera className="w-4 h-4" />
-                    <span>Открыть камеру и сканировать QR</span>
+                    <span>Включить камеру и сканировать QR</span>
                   </button>
                 </>
               )}
             </div>
           )}
 
-          {/* Ввод ключа с доски вручную (пустое поле — без автоподстановки секретного кода!) */}
+          {/* Ввод сегодняшнего ключа с доски вручную */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-              Ключ с доски куратора (если без камеры)
+              Ежедневный ключ с доски куратора
             </label>
             <input
               type="text"
               required
               value={enteredKey}
               onChange={(e) => setEnteredKey(e.target.value.toUpperCase())}
-              placeholder="Введите ключ, показанный на доске в классе"
+              placeholder="Введите сегодняшний ключ с доски в классе"
               className="w-full px-3.5 py-2.5 rounded-xl bg-slate-50 border border-slate-300 text-xs font-mono font-bold uppercase text-slate-900 focus:bg-white focus:outline-none focus:border-indigo-600"
             />
           </div>

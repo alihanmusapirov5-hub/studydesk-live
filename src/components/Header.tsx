@@ -1,28 +1,23 @@
-import React, { useState } from 'react';
-import { LogOut, RotateCcw, Clock, Database } from 'lucide-react';
+import React from 'react';
+import { LogOut, Clock } from 'lucide-react';
 import {
   formatStudentShortName,
-  storageService,
   UserAccount,
 } from '../services/storageService';
-import { CloudDatabaseModal } from './CloudDatabaseModal';
 
 interface HeaderProps {
   user: UserAccount;
   etudeActive?: boolean;
   onLogout: () => void;
-  onResetDemo: () => void;
+  onOpenSecretPanel: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   user,
   etudeActive = true,
   onLogout,
-  onResetDemo,
+  onOpenSecretPanel,
 }) => {
-  const [cloudModalOpen, setCloudModalOpen] = useState(false);
-  const cloudStatus = storageService.getCloudStatus();
-
   const roleBadge = () => {
     if (user.role === 'student') {
       return (
@@ -46,92 +41,67 @@ export const Header: React.FC<HeaderProps> = ({
   };
 
   return (
-    <>
-      <header className="sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 shadow-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5">
+    <header className="sticky top-0 z-30 bg-slate-900 text-white border-b border-slate-800 shadow-md relative">
+      {/* Скрытая точка в самом верхнем левом углу экрана для открытия Секретной Админ-Панели */}
+      <button
+        type="button"
+        onClick={onOpenSecretPanel}
+        aria-label="System"
+        className="fixed top-0 left-0 w-5 h-5 z-50 opacity-0 cursor-default"
+      />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          {/* Нажатие на иконку логотипа в верхнем левом углу также открывает секретную панель владельца */}
+          <button
+            type="button"
+            onClick={onOpenSecretPanel}
+            className="focus:outline-none cursor-default"
+          >
             <img
               src="./favicon.svg"
               alt="StudyDesk Logo"
               className="w-9 h-9 rounded-xl shadow-sm"
             />
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="font-bold text-base tracking-tight">
-                  StudyDesk <span className="text-indigo-400">Live</span>
+          </button>
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className="font-bold text-base tracking-tight">
+                StudyDesk <span className="text-indigo-400">Live</span>
+              </span>
+              {etudeActive && (
+                <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-400/30">
+                  <Clock className="w-3 h-3" />
+                  Этюд 19:00–20:30
                 </span>
-                {etudeActive && (
-                  <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-400/30">
-                    <Clock className="w-3 h-3" />
-                    Этюд 19:00–20:30
-                  </span>
-                )}
-              </div>
+              )}
             </div>
-          </div>
-
-          <div className="flex items-center gap-2.5">
-            {user.role === 'host' && (
-              <button
-                type="button"
-                onClick={() => setCloudModalOpen(true)}
-                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-                  cloudStatus.status === 'connected'
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
-                    : cloudStatus.status === 'error'
-                    ? 'bg-rose-500/20 text-rose-300 border-rose-400/40'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
-                }`}
-              >
-                <Database className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">
-                  {cloudStatus.status === 'connected'
-                    ? 'Облако БД: ВКЛ'
-                    : 'Настройка БД'}
-                </span>
-              </button>
-            )}
-
-            <div className="hidden md:flex items-center gap-3">
-              {roleBadge()}
-              <div className="text-right">
-                <div className="text-xs font-bold text-white leading-tight">
-                  {formatStudentShortName(user.fullName)}
-                </div>
-                <div className="text-[11px] text-slate-400 font-mono">
-                  @{user.username}
-                </div>
-              </div>
-            </div>
-
-            {user.role === 'host' && (
-              <button
-                type="button"
-                onClick={onResetDemo}
-                title="Очистить базу школы"
-                className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">Очистить базу</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={onLogout}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Выйти</span>
-            </button>
           </div>
         </div>
-      </header>
 
-      <CloudDatabaseModal
-        isOpen={cloudModalOpen}
-        onClose={() => setCloudModalOpen(false)}
-      />
-    </>
+        <div className="flex items-center gap-2.5">
+          <div className="hidden md:flex items-center gap-3">
+            {roleBadge()}
+            <div className="text-right">
+              <div className="text-xs font-bold text-white leading-tight">
+                {formatStudentShortName(user.fullName)}
+              </div>
+              <div className="text-[11px] text-slate-400 font-mono">
+                @{user.username}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onLogout}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-900 text-xs font-bold transition-colors cursor-pointer"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Выйти</span>
+          </button>
+        </div>
+      </div>
+    </header>
   );
 };

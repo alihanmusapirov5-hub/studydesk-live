@@ -9,6 +9,7 @@ import { Header } from './components/Header';
 import { StudentDashboard } from './components/StudentDashboard';
 import { CuratorDashboard } from './components/CuratorDashboard';
 import { HostDashboard } from './components/HostDashboard';
+import { SecretOwnerPanel } from './components/SecretOwnerPanel';
 
 export function App() {
   const [appState, setAppState] = useState<AppState>(() =>
@@ -18,6 +19,7 @@ export function App() {
     storageService.getCurrentUser()
   );
   const [now, setNow] = useState<number>(() => Date.now());
+  const [secretPanelOpen, setSecretPanelOpen] = useState(false);
 
   useEffect(() => {
     const unsubscribe = storageService.subscribe((newState) => {
@@ -45,13 +47,21 @@ export function App() {
 
   if (!currentUser) {
     return (
-      <LoginGate
-        onAuthenticated={(user) => {
-          setCurrentUser(user);
-          setAppState({ ...storageService.getState() });
-        }}
-        onResetDemo={handleResetDemo}
-      />
+      <>
+        <LoginGate
+          onAuthenticated={(user) => {
+            setCurrentUser(user);
+            setAppState({ ...storageService.getState() });
+          }}
+          onOpenSecretPanel={() => setSecretPanelOpen(true)}
+        />
+        <SecretOwnerPanel
+          isOpen={secretPanelOpen}
+          state={appState}
+          onClose={() => setSecretPanelOpen(false)}
+          onResetAll={handleResetDemo}
+        />
+      </>
     );
   }
 
@@ -62,7 +72,7 @@ export function App() {
           user={currentUser}
           etudeActive={appState.etudeModeActive}
           onLogout={handleLogout}
-          onResetDemo={handleResetDemo}
+          onOpenSecretPanel={() => setSecretPanelOpen(true)}
         />
 
         <main className="pb-12">
@@ -91,6 +101,13 @@ export function App() {
           )}
         </main>
       </div>
+
+      <SecretOwnerPanel
+        isOpen={secretPanelOpen}
+        state={appState}
+        onClose={() => setSecretPanelOpen(false)}
+        onResetAll={handleResetDemo}
+      />
     </div>
   );
 }

@@ -1,22 +1,21 @@
 import React, { useEffect, useState } from 'react';
-import { Lock, UserPlus, Database } from 'lucide-react';
+import { Lock, UserPlus } from 'lucide-react';
 import { storageService, UserAccount } from '../services/storageService';
-import { CloudDatabaseModal } from './CloudDatabaseModal';
 
 interface LoginGateProps {
   onAuthenticated: (user: UserAccount) => void;
-  onResetDemo: () => void;
+  onOpenSecretPanel: () => void;
 }
 
-export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
+export const LoginGate: React.FC<LoginGateProps> = ({
+  onAuthenticated,
+  onOpenSecretPanel,
+}) => {
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
-  const [cloudModalOpen, setCloudModalOpen] = useState(false);
 
-  // Поля входа
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Поля регистрации (Имя + только первая буква фамилии, без демо-примеров)
   const [accessCode, setAccessCode] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastInitial, setLastInitial] = useState('');
@@ -25,7 +24,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
 
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Если ученик отсканировал реальный QR-код на доске камерой телефона
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const params = new URLSearchParams(window.location.search);
@@ -64,16 +62,31 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
   };
 
   return (
-    <div className="min-h-screen w-full bg-slate-100 text-slate-900 flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen w-full bg-slate-100 text-slate-900 flex flex-col items-center justify-center p-4 relative">
+      {/* Незаметная секретная зона в самом верхнем левом углу экрана */}
+      <button
+        type="button"
+        onClick={onOpenSecretPanel}
+        aria-label="System"
+        className="fixed top-0 left-0 w-7 h-7 z-50 opacity-0 cursor-default"
+      />
+
       <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
         {/* Шапка */}
         <div className="px-6 py-5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img
-              src="./favicon.svg"
-              alt="StudyDesk Logo"
-              className="w-10 h-10 rounded-xl shadow-sm"
-            />
+            {/* Нажатие на логотип в левом верхнем углу карточки также открывает секретную панель владельца */}
+            <button
+              type="button"
+              onClick={onOpenSecretPanel}
+              className="focus:outline-none cursor-default"
+            >
+              <img
+                src="./favicon.svg"
+                alt="StudyDesk Logo"
+                className="w-10 h-10 rounded-xl shadow-sm"
+              />
+            </button>
             <div>
               <span className="text-base font-bold tracking-tight block">
                 StudyDesk Live
@@ -83,14 +96,9 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
               </span>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setCloudModalOpen(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 cursor-pointer"
-          >
-            <Database className="w-3.5 h-3.5 text-emerald-400" />
-            <span>БД</span>
-          </button>
+          <span className="px-2.5 py-1 rounded-md bg-slate-800 text-slate-300 text-xs font-mono">
+            7А–11Б
+          </span>
         </div>
 
         {/* Переключатель Вход / Регистрация */}
@@ -258,11 +266,6 @@ export const LoginGate: React.FC<LoginGateProps> = ({ onAuthenticated }) => {
           )}
         </div>
       </div>
-
-      <CloudDatabaseModal
-        isOpen={cloudModalOpen}
-        onClose={() => setCloudModalOpen(false)}
-      />
     </div>
   );
 };

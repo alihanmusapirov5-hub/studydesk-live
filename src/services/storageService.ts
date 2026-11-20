@@ -39,7 +39,7 @@ export interface UserAccount {
   id: string;
   username: string;
   password: string;
-  fullName: string; // Хранится в формате "Имя Ф." (фамилия только первая буква)
+  fullName: string; // Хранится в формате "Имя Ф."
   role: UserRole;
   classId: ClassId;
   totalStudySeconds: number;
@@ -52,6 +52,7 @@ export interface ClassAccessConfig {
   studentJoinCode: string;
   curatorJoinCode: string;
   boardQrKey: string;
+  qrRevision?: number;
 }
 
 export interface AwayCheckinMessage {
@@ -123,6 +124,7 @@ export interface ClassroomData {
 
 export interface AppState {
   version: number;
+  lastQrDate: string; // YYYY-MM-DD для ежедневной авто-смены QR-кодов
   etudeModeActive: boolean;
   users: UserAccount[];
   classAccess: Record<ClassId, ClassAccessConfig>;
@@ -132,9 +134,9 @@ export interface AppState {
   lastUpdated: number;
 }
 
-const STORAGE_KEY = 'studydesk_school_prod_v5';
-const SESSION_USER_KEY = 'studydesk_school_session_v5';
-const URL_SCANNED_TOKEN_KEY = 'studydesk_scanned_qr_token_v5';
+const STORAGE_KEY = 'studydesk_school_prod_v6';
+const SESSION_USER_KEY = 'studydesk_school_session_v6';
+const URL_SCANNED_TOKEN_KEY = 'studydesk_scanned_qr_token_v6';
 
 export const AWAY_LOCATIONS = [
   'В библиотеке',
@@ -145,6 +147,35 @@ export const AWAY_LOCATIONS = [
   'Столовая',
   'Опаздываю на 5–10 мин',
 ];
+
+/**
+ * Возвращает текущую дату YYYY-MM-DD по локальному времени школы.
+ */
+export function getTodayDateKey(): string {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Генерирует уникальный ежедневный QR-ключ для класса на основе текущей даты (меняется каждый день автоматически!).
+ */
+export function computeDailyQrToken(
+  classId: ClassId,
+  dateKey = getTodayDateKey(),
+  revision = 0
+): string {
+  const seedStr = `STUDYDESK-${classId}-${dateKey}-REV-${revision}`;
+  let hash = 2166136261;
+  for (let i = 0; i < seedStr.length; i++) {
+    hash ^= seedStr.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const fourDigits = 1000 + (Math.abs(hash) % 9000);
+  return `KEY-${classId}-${fourDigits}`;
+}
 
 /**
  * Форматирует имя ученика строго как "Имя Ф." (Имя полностью, фамилия — только первая буква с точкой).
@@ -164,7 +195,6 @@ export function formatStudentShortName(
     return `${capFirst} ${initial}.`;
   }
 
-  // Если передана строка из двух слов ("Алихан Мусапиров" или "Алихан М.")
   const parts = cleanFirst.split(/\s+/).filter(Boolean);
   const firstWord =
     parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
@@ -229,29 +259,16 @@ export const DEFAULT_CURATOR_CLASS_CODES: Record<ClassId, string> = {
   '11B': '11B-9091',
 };
 
-export const DEFAULT_QR_TOKENS: Record<ClassId, string> = {
-  '7A': 'KEY-7A-100',
-  '7B': 'KEY-7B-111',
-  '8A': 'KEY-8A-222',
-  '8B': 'KEY-8B-333',
-  '9A': 'KEY-9A-444',
-  '9B': 'KEY-9B-555',
-  '10A': 'KEY-10A-666',
-  '10B': 'KEY-10B-777',
-  '11A': 'KEY-11A-888',
-  '11B': 'KEY-11B-999',
-};
-
 function getInitialState(): AppState {
   const now = Date.now();
+  const todayKey = getTodayDateKey();
 
-  // Чистая школьная база: изначально только Завуч/Админ, никаких фейковых учеников
   const users: UserAccount[] = [
     {
       id: 'usr-host',
       username: 'zavuch',
       password: 'admin',
-      fullName: 'Завуч Школы',
+      fullName: 'Завуч Ш.',
       role: 'host',
       classId: '11A',
       totalStudySeconds: 0,
@@ -262,25 +279,28 @@ function getInitialState(): AppState {
   const classrooms = {} as Record<ClassId, ClassroomData>;
 
   CLASS_IDS.forEach((cid) => {
+    const dailyToken = computeDailyQrToken(cid, todayKey, 0);
     classAccess[cid] = {
       classId: cid,
       studentJoinCode: DEFAULT_STUDENT_CLASS_CODES[cid],
       curatorJoinCode: DEFAULT_CURATOR_CLASS_CODES[cid],
-      boardQrKey: DEFAULT_QR_TOKENS[cid],
+      boardQrKey: dailyToken,
+      qrRevision: 0,
     };
 
     classrooms[cid] = {
       classId: cid,
       roomName: ROOM_NUMBERS[cid],
       curatorName: 'Не назначен',
-      qrToken: DEFAULT_QR_TOKENS[cid],
+      qrToken: dailyToken,
       desks: createEmptyDesks(DESKS_PER_CLASS),
       homework: [],
     };
   });
 
   return {
-    version: 5,
+    version: 6,
+    lastQrDate: todayKey,
     etudeModeActive: true,
     users,
     classAccess,
@@ -336,11 +356,13 @@ class StorageService {
 
   constructor() {
     if (typeof window !== 'undefined') {
-      // Сохраняем QR-токен из URL, если ученик отсканировал реальный QR-код камерой телефона
       const params = new URLSearchParams(window.location.search);
       const urlToken = params.get('token');
       if (urlToken) {
-        sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, urlToken.trim().toUpperCase());
+        sessionStorage.setItem(
+          URL_SCANNED_TOKEN_KEY,
+          urlToken.trim().toUpperCase()
+        );
       }
 
       window.addEventListener('storage', (event: StorageEvent) => {
@@ -366,7 +388,10 @@ class StorageService {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get('token');
     if (fromUrl) {
-      sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, fromUrl.trim().toUpperCase());
+      sessionStorage.setItem(
+        URL_SCANNED_TOKEN_KEY,
+        fromUrl.trim().toUpperCase()
+      );
       return fromUrl.trim().toUpperCase();
     }
     return sessionStorage.getItem(URL_SCANNED_TOKEN_KEY);
@@ -383,25 +408,46 @@ class StorageService {
     return { status: this.cloudSyncStatus, error: this.lastCloudError };
   }
 
-  private ensure24Desks(state: AppState): AppState {
+  /**
+   * Проверяет и автоматически обновляет QR-коды всех классов, если наступил новый день,
+   * а также гарантирует наличие 24 парт в каждом классе.
+   */
+  private normalizeAndRotateDailyQR(state: AppState): AppState {
+    const todayKey = getTodayDateKey();
+    const dateChanged = state.lastQrDate !== todayKey;
+
+    if (dateChanged) {
+      state.lastQrDate = todayKey;
+    }
+
     CLASS_IDS.forEach((cid) => {
       const room = state.classrooms[cid];
-      if (room && room.desks.length < DESKS_PER_CLASS) {
-        for (let i = room.desks.length; i < DESKS_PER_CLASS; i++) {
-          room.desks.push({
-            deskNumber: i + 1,
-            row: Math.floor(i / 6) + 1,
-            col: (i % 6) + 1,
-            occupant: null,
-          });
+      const access = state.classAccess[cid];
+      if (room && access) {
+        if (dateChanged || !room.qrToken) {
+          const rev = dateChanged ? 0 : access.qrRevision || 0;
+          access.qrRevision = rev;
+          const newDailyToken = computeDailyQrToken(cid, todayKey, rev);
+          room.qrToken = newDailyToken;
+          access.boardQrKey = newDailyToken;
         }
+        if (room.desks.length < DESKS_PER_CLASS) {
+          for (let i = room.desks.length; i < DESKS_PER_CLASS; i++) {
+            room.desks.push({
+              deskNumber: i + 1,
+              row: Math.floor(i / 6) + 1,
+              col: (i % 6) + 1,
+              occupant: null,
+            });
+          }
+        }
+        room.desks.forEach((d, idx) => {
+          d.row = Math.floor(idx / 6) + 1;
+          d.col = (idx % 6) + 1;
+        });
       }
-      // Пересчитываем ряды по 6 парт
-      room?.desks.forEach((d, idx) => {
-        d.row = Math.floor(idx / 6) + 1;
-        d.col = (idx % 6) + 1;
-      });
     });
+
     return state;
   }
 
@@ -428,7 +474,7 @@ class StorageService {
     this.lastCloudError = null;
 
     const local = this.getState();
-    if (!res.data || res.data.version !== 5) {
+    if (!res.data || res.data.version !== 6) {
       if (forcePushIfEmpty || true) {
         const pushRes = await pushCloudState(local);
         if (!pushRes.ok) {
@@ -441,8 +487,12 @@ class StorageService {
       return { ok: true };
     }
 
-    const remote = this.ensure24Desks(res.data);
-    if (remote && remote.lastUpdated && remote.lastUpdated >= local.lastUpdated) {
+    const remote = this.normalizeAndRotateDailyQR(res.data);
+    if (
+      remote &&
+      remote.lastUpdated &&
+      remote.lastUpdated >= local.lastUpdated
+    ) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
       this.notifyListeners(remote);
     }
@@ -458,12 +508,12 @@ class StorageService {
         return initial;
       }
       const parsed = JSON.parse(raw) as AppState;
-      if (!parsed.classAccess || parsed.version !== 5) {
+      if (!parsed.classAccess || parsed.version !== 6) {
         const initial = getInitialState();
         this.saveState(initial, false);
         return initial;
       }
-      return this.ensure24Desks(parsed);
+      return this.normalizeAndRotateDailyQR(parsed);
     } catch {
       return getInitialState();
     }
@@ -513,7 +563,9 @@ class StorageService {
       if (!raw) return null;
       const sessionUser = JSON.parse(raw) as UserAccount;
       const state = this.getState();
-      return state.users.find((u) => u.username === sessionUser.username) || null;
+      return (
+        state.users.find((u) => u.username === sessionUser.username) || null
+      );
     } catch {
       return null;
     }
@@ -585,7 +637,8 @@ class StorageService {
 
     if (!matchedClass) {
       return {
-        error: 'Код класса не найден. Уточните код у вашего куратора или завуча.',
+        error:
+          'Код класса не найден. Уточните код у вашего куратора или завуча.',
       };
     }
 
@@ -688,13 +741,13 @@ class StorageService {
   public regenerateRoomQR(classId: ClassId): void {
     const state = this.getState();
     const room = state.classrooms[classId];
-    if (!room) return;
-    const randomNum = Math.floor(1000 + Math.random() * 9000);
-    const newKey = `KEY-${classId}-${randomNum}`;
+    const access = state.classAccess[classId];
+    if (!room || !access) return;
+    const nextRev = (access.qrRevision || 0) + 1;
+    access.qrRevision = nextRev;
+    const newKey = computeDailyQrToken(classId, getTodayDateKey(), nextRev);
     room.qrToken = newKey;
-    if (state.classAccess[classId]) {
-      state.classAccess[classId].boardQrKey = newKey;
-    }
+    access.boardQrKey = newKey;
     this.saveState(state);
   }
 
@@ -759,11 +812,10 @@ class StorageService {
     ) {
       return {
         error:
-          'Неверный QR-ключ! Отсканируйте реальный QR-код на доске куратора камерой телефона или введите актуальный ключ с доски.',
+          'Неверный QR-ключ! Отсканируйте реальный сегодняшней QR-код на доске куратора камерой или введите актуальный ключ с доски.',
       };
     }
 
-    // Сохраняем токен в сессии, чтобы ученик мог пересесть без повторного ввода, пока куратор не сменил код
     sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, expectedToken);
 
     CLASS_IDS.forEach((cid) => {
