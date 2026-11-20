@@ -12,8 +12,10 @@ import {
 } from 'lucide-react';
 import {
   AppState,
+  DESKS_PER_CLASS,
   DeskOccupant,
   formatDuration,
+  formatStudentShortName,
   getLiveElapsedSeconds,
   storageService,
   UserAccount,
@@ -37,7 +39,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const currentClassroom = state.classrooms[classId];
   const classAccess = state.classAccess[classId];
 
-  const [scannerTargetDesk, setScannerTargetDesk] = useState<number | null>(null);
+  const [scannerTargetDesk, setScannerTargetDesk] = useState<number | null>(
+    null
+  );
   const [customTopicDraft, setCustomTopicDraft] = useState('');
 
   const activeSeat: DeskOccupant | null = (() => {
@@ -61,7 +65,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const deskParam = params.get('desk');
     if (deskParam && !activeSeat) {
       const dNum = parseInt(deskParam, 10);
-      if (dNum >= 1 && dNum <= 12) {
+      if (dNum >= 1 && dNum <= DESKS_PER_CLASS) {
         setScannerTargetDesk(dNum);
       }
     }
@@ -101,7 +105,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Баннер обязательного Этюда 19:00 - 20:30 */}
+      {/* Баннер обязательного Этюда 19:00 - 20:30 (без показа секретного QR-ключа ученику!) */}
       <div className="rounded-xl bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white p-4 sm:p-5 shadow-md flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5">
           <div className="w-11 h-11 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0">
@@ -117,19 +121,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
-              Каждый ученик обязан занять место по QR-ключу на доске до 19:00 либо отметиться в чате ниже, где он находится.
+              Отсканируйте реальный QR-код на доске куратора, чтобы занять свою парту, либо отметьтесь в чате ниже, если вы вне кабинета.
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3 text-xs font-mono">
-          <div className="px-3 py-2 rounded-lg bg-slate-800/90 border border-slate-700">
-            <span className="text-slate-400">Ключ на доске: </span>
-            <strong className="text-indigo-300">{currentClassroom.qrToken}</strong>
-          </div>
-          <div className="px-3 py-2 rounded-lg bg-slate-800/90 border border-slate-700">
+          <div className="px-3.5 py-2 rounded-lg bg-slate-800/90 border border-slate-700">
             <span className="text-slate-400">Парт занято: </span>
-            <strong className="text-white">{occupiedCount}/12</strong>
+            <strong className="text-white">
+              {occupiedCount} / {DESKS_PER_CLASS}
+            </strong>
           </div>
         </div>
       </div>
@@ -147,7 +149,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-base font-bold text-slate-900">
-                      {activeSeat.studentName}
+                      {formatStudentShortName(activeSeat.studentName)}
                     </span>
                     {activeSeat.status === 'verified' ? (
                       <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-bold">
@@ -206,7 +208,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
             </div>
 
-            {/* Поле, где ученик сам пишет, что он сейчас учит */}
             <form
               onSubmit={handleTopicSave}
               className="pt-3 border-t border-slate-200 flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5"
@@ -241,7 +242,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   Вы ещё не заняли парту на Этюд в классе {classId}
                 </div>
                 <div className="text-xs text-slate-500 mt-0.5">
-                  Нажмите на свободную парту ниже и отсканируйте общий QR-ключ на доске, чтобы занять место.
+                  Выберите любую из {DESKS_PER_CLASS} парт ниже и отсканируйте реальный QR-код на доске куратора.
                 </div>
               </div>
             </div>
@@ -259,21 +260,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-sm transition-colors cursor-pointer"
             >
               <QrCode className="w-4 h-4" />
-              <span>Сканировать QR-ключ и сесть</span>
+              <span>Сканировать QR на доске и сесть</span>
             </button>
           </div>
         )}
       </div>
 
-      {/* Схема кабинета (12 парт) */}
+      {/* Схема кабинета (24 парты: 4 ряда по 6 парт) */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
           <div>
             <h2 className="text-sm sm:text-base font-bold text-slate-900">
-              Интерактивная схема кабинета {classId} ({currentClassroom.roomName})
+              Схема кабинета {classId} ({currentClassroom.roomName}) •{' '}
+              {DESKS_PER_CLASS} парты
             </h2>
             <p className="text-xs text-slate-500">
-              Куратор класса: <strong>{currentClassroom.curatorName}</strong> • Нажмите на свободную парту для сканирования QR-ключа
+              Куратор класса: <strong>{currentClassroom.curatorName}</strong> •
+              Нажмите на свободную парту для посадки по QR
             </p>
           </div>
 
@@ -294,10 +297,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         <div className="w-full py-2 rounded-lg bg-slate-900 text-white text-center text-xs font-mono uppercase tracking-widest">
-          Интерактивная доска (Общий QR-ключ места: {currentClassroom.qrToken})
+          Интерактивная доска и экран куратора (Сканируйте QR-код с доски)
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
           {currentClassroom.desks.map((desk) => {
             const occ = desk.occupant;
             const isMe = occ?.studentId === user.id;
@@ -308,28 +311,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   key={desk.deskNumber}
                   type="button"
                   onClick={() => handleEmptyDeskClick(desk.deskNumber)}
-                  className="h-36 p-4 rounded-xl bg-slate-50/70 hover:bg-indigo-50/50 border-2 border-dashed border-slate-300 hover:border-indigo-500 transition-all flex flex-col justify-between text-left cursor-pointer group"
+                  className="h-28 p-3 rounded-xl bg-slate-50/70 hover:bg-indigo-50/50 border border-dashed border-slate-300 hover:border-indigo-500 transition-all flex flex-col justify-between text-left cursor-pointer group"
                 >
                   <div className="flex items-center justify-between w-full">
-                    <span className="px-2 py-0.5 rounded-md bg-white border border-slate-200 text-xs font-mono font-bold text-slate-700 group-hover:text-indigo-700">
-                      Парта №{desk.deskNumber}
+                    <span className="px-2 py-0.5 rounded bg-white border border-slate-200 text-[11px] font-mono font-bold text-slate-700 group-hover:text-indigo-700">
+                      №{desk.deskNumber}
                     </span>
-                    <span className="text-[11px] font-mono text-slate-400">
+                    <span className="text-[10px] font-mono text-slate-400">
                       Ряд {desk.row}
                     </span>
                   </div>
 
                   <div className="my-auto text-center">
-                    <span className="text-xs text-slate-500 group-hover:text-indigo-700 font-semibold">
-                      Свободное место — Нажать для QR
+                    <span className="text-[11px] text-slate-500 group-hover:text-indigo-700 font-semibold">
+                      Свободно
                     </span>
                   </div>
 
-                  <div className="text-[10px] font-mono text-slate-400 flex items-center justify-between">
-                    <span>Ключ доски</span>
-                    <span className="text-indigo-600 font-bold opacity-0 group-hover:opacity-100">
-                      Занять →
-                    </span>
+                  <div className="text-[10px] font-mono text-indigo-600 font-bold opacity-0 group-hover:opacity-100 text-right">
+                    QR-вход →
                   </div>
                 </button>
               );
@@ -341,7 +341,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             return (
               <div
                 key={desk.deskNumber}
-                className={`h-36 p-4 rounded-xl border-2 flex flex-col justify-between shadow-sm ${
+                className={`h-28 p-3 rounded-xl border-2 flex flex-col justify-between shadow-sm ${
                   isMe
                     ? 'bg-indigo-50/40 border-indigo-600'
                     : isVerified
@@ -349,32 +349,32 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     : 'bg-amber-50/30 border-amber-400'
                 }`}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white text-xs font-mono font-bold">
+                <div className="flex items-center justify-between gap-1">
+                  <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white text-[10px] font-mono font-bold">
                     №{desk.deskNumber} {isMe ? '• ВЫ' : ''}
                   </span>
                   <span
-                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                    className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
                       isVerified
-                        ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                        : 'bg-amber-100 text-amber-800 border border-amber-200'
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
                     }`}
                   >
-                    {isVerified ? '✓ Подтверждён' : '⏳ Ожидание'}
+                    {isVerified ? '✓' : '⏳'}
                   </span>
                 </div>
 
                 <div className="my-auto">
-                  <div className="text-sm font-bold text-slate-900 truncate">
-                    {occ.studentName}
+                  <div className="text-xs font-bold text-slate-900 truncate">
+                    {formatStudentShortName(occ.studentName)}
                   </div>
-                  <div className="text-xs text-indigo-700 truncate mt-0.5 font-medium">
-                    📚 {occ.subject}
+                  <div className="text-[11px] text-indigo-700 truncate font-medium">
+                    {occ.subject}
                   </div>
                 </div>
 
-                <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs font-mono">
-                  <span className="text-slate-500">Вход: {occ.arrivedAt}</span>
+                <div className="pt-1 border-t border-slate-200/80 flex items-center justify-between text-[10px] font-mono">
+                  <span className="text-slate-400">{occ.arrivedAt}</span>
                   <span className="font-bold text-slate-900">
                     {formatDuration(elapsed)}
                   </span>
@@ -394,7 +394,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         authorName={user.fullName}
       />
 
-      {/* Топ-рейтинг класса и Чат «Где я нахожусь (если вне класса)» */}
+      {/* ТОП-5 Рейтинг класса и Чат «Где я нахожусь (если вне класса)» */}
       <ClassRatingAndAwayPanel
         currentUser={user}
         classId={classId}

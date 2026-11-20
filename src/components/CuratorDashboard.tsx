@@ -13,8 +13,10 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import {
   AppState,
+  DESKS_PER_CLASS,
   DeskOccupant,
   formatDuration,
+  formatStudentShortName,
   getLiveElapsedSeconds,
   storageService,
   UserAccount,
@@ -33,7 +35,6 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
   state,
   now,
 }) => {
-  // Один куратор — строго только на свой класс!
   const assignedClassId = user.classId;
   const classroom = state.classrooms[assignedClassId];
   const classAccess = state.classAccess[assignedClassId];
@@ -54,25 +55,24 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
     return a.deskNumber - b.deskNumber;
   });
 
-  // Все ученики этого класса для контроля обязательного Этюда 19:00–20:30
   const allClassStudents = state.users.filter(
     (u) => u.role === 'student' && u.classId === assignedClassId
   );
 
-  // Общий QR-код на доске содержит и код регистрации в класс, и ключ посадки за парту!
+  // Реальная ссылка внутри QR-кода для сканирования камерой телефона ученика
   const boardQrUrl =
     typeof window !== 'undefined'
-      ? `${window.location.origin}/?classCode=${classAccess.studentJoinCode}&room=${assignedClassId}&token=${classroom.qrToken}`
+      ? `${window.location.origin}${window.location.pathname}?classCode=${classAccess.studentJoinCode}&room=${assignedClassId}&token=${classroom.qrToken}`
       : classroom.qrToken;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      {/* Шапка куратора + статус Этюда 19:00–20:30 */}
+      {/* Шапка куратора */}
       <div className="rounded-xl bg-slate-900 text-white p-5 shadow-md flex flex-wrap items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-              Личный кабинет куратора • Только {assignedClassId}
+              Куратор • Только класс {assignedClassId}
             </span>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-400/30">
               Этюд 19:00–20:30
@@ -80,19 +80,22 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
           </div>
           <h1 className="text-lg sm:text-xl font-bold mt-1.5">
             Класс {assignedClassId} ({classroom.roomName}) • Куратор:{' '}
-            {user.fullName}
+            {formatStudentShortName(user.fullName)}
           </h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 text-xs font-mono">
           <div className="px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700">
-            Код регистрации класса:{' '}
+            Код рег. класса:{' '}
             <strong className="text-indigo-300">
               {classAccess.studentJoinCode}
             </strong>
           </div>
           <div className="px-3.5 py-2 rounded-xl bg-slate-800 border border-slate-700">
-            За партами: <strong>{seatedOccupants.length}/12</strong>
+            За партами:{' '}
+            <strong>
+              {seatedOccupants.length}/{DESKS_PER_CLASS}
+            </strong>
           </div>
           <div className="px-3.5 py-2 rounded-xl bg-emerald-600 text-white font-bold">
             Подтверждено: {verifiedOccupants.length}
@@ -100,15 +103,15 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
         </div>
       </div>
 
-      {/* Верхний блок: Общий QR-код на доску + Подтверждение присутствия */}
+      {/* Верхний блок: Реальный QR-код на доску + Подтверждение присутствия */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* 1. Общий QR-код на доске (для регистрации в класс и как ключ для места) */}
+        {/* 1. Реальный QR-код на доске */}
         <div className="lg:col-span-4 bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-900 flex items-center gap-1.5">
                 <QrCode className="w-4 h-4 text-indigo-600" />
-                Общий QR-ключ на доске
+                Реальный QR-ключ на доске
               </span>
               <button
                 type="button"
@@ -121,19 +124,21 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
             </div>
 
             <p className="text-xs text-slate-500 mt-2">
-              Выведите этот QR на доску. По нему ученики могут{' '}
-              <strong>зарегистрироваться в {assignedClassId}</strong> и{' '}
-              <strong>разблокировать свою парту</strong> перед посадкой.
+              Ученики не видят этот ключ на своих экранах — они должны{' '}
+              <strong>отсканировать этот QR-код камерой с вашей доски</strong> перед посадкой.
             </p>
 
             <div className="my-4 p-4 rounded-xl bg-slate-50 border border-slate-200 flex flex-col items-center justify-center">
               <div className="p-3 bg-white rounded-xl border border-slate-200 shadow-sm">
-                <QRCodeSVG value={boardQrUrl} size={164} level="M" />
+                <QRCodeSVG value={boardQrUrl} size={168} level="M" />
               </div>
 
               <div className="mt-3 w-full space-y-1.5 text-center">
                 <div className="px-3 py-1.5 rounded-lg bg-indigo-50 border border-indigo-200 text-xs font-mono">
-                  Ключ места: <strong className="text-indigo-900">{classroom.qrToken}</strong>
+                  Ключ места:{' '}
+                  <strong className="text-indigo-900">
+                    {classroom.qrToken}
+                  </strong>
                 </div>
                 <div className="px-3 py-1.5 rounded-lg bg-white border border-slate-200 text-xs font-mono">
                   Код рег. класса:{' '}
@@ -155,16 +160,17 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
           </button>
         </div>
 
-        {/* 2. Панель подтверждения присутствия и контроль явки на Этюд */}
+        {/* 2. Панель подтверждения присутствия */}
         <div className="lg:col-span-8 bg-white rounded-xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between">
           <div>
             <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200">
               <div>
                 <h2 className="text-sm sm:text-base font-bold text-slate-900">
-                  Двухэтапное подтверждение присутствия • Класс {assignedClassId}
+                  Подтверждение присутствия • Класс {assignedClassId} (
+                  {DESKS_PER_CLASS} парты)
                 </h2>
                 <p className="text-xs text-slate-500">
-                  Проверьте, что ученик действительно сидит за партой, и нажмите «Подтвердить».
+                  Проверьте, что ученик сидит за партой, и нажмите «Подтвердить».
                 </p>
               </div>
 
@@ -213,7 +219,7 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-bold text-slate-900">
-                              {occ.studentName}
+                              {formatStudentShortName(occ.studentName)}
                             </span>
                             {isPending ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
@@ -286,7 +292,7 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
                 Список учеников класса {assignedClassId} на Этюд (19:00–20:30)
               </span>
               <span className="text-xs text-slate-500">
-                Всего в классе: {allClassStudents.length} чел.
+                Зарегистрировано: {allClassStudents.length} чел.
               </span>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -305,7 +311,9 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
                         : 'bg-slate-50 border-slate-200 text-slate-600'
                     }`}
                   >
-                    <span className="font-bold">{stu.fullName}</span>
+                    <span className="font-bold">
+                      {formatStudentShortName(stu.fullName)}
+                    </span>
                     <span className="text-[11px] opacity-80">
                       {seatedDesk
                         ? `✓ Парта №${seatedDesk.deskNumber}`
@@ -330,7 +338,7 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
         authorName={user.fullName}
       />
 
-      {/* Топ-рейтинг и Чат «Где я нахожусь (если вне класса)» */}
+      {/* ТОП-5 Рейтинг и Чат «Где я нахожусь (если вне класса)» */}
       <ClassRatingAndAwayPanel
         currentUser={user}
         classId={assignedClassId}
@@ -357,14 +365,14 @@ export const CuratorDashboard: React.FC<CuratorDashboardProps> = ({
             </div>
 
             <h2 className="text-3xl sm:text-4xl font-extrabold">
-              Общий QR-ключ для регистрации и посадки
+              Реальный QR-ключ для посадки за парту
             </h2>
             <p className="text-slate-400 text-sm">
-              Отсканируйте код камерой или введите ключ на сайте перед тем, как занять парту
+              Наведите камеру телефона на этот QR-код или введите ключ с экрана
             </p>
 
             <div className="p-6 bg-white rounded-3xl shadow-2xl inline-block">
-              <QRCodeSVG value={boardQrUrl} size={300} level="M" />
+              <QRCodeSVG value={boardQrUrl} size={310} level="M" />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-md mx-auto pt-2">

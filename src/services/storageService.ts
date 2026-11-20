@@ -31,29 +31,27 @@ export const CLASS_IDS: ClassId[] = [
   '11B',
 ];
 
+export const DESKS_PER_CLASS = 24; // 24 парты в каждом кабинете (4 ряда по 6 парт)
+
 export type VerificationStatus = 'pending' | 'verified';
 
 export interface UserAccount {
   id: string;
   username: string;
   password: string;
-  fullName: string;
+  fullName: string; // Хранится в формате "Имя Ф." (фамилия только первая буква)
   role: UserRole;
   classId: ClassId;
-  totalStudySeconds: number; // Накопленное время учёбы для Топ-рейтинга
-  currentLocationStatus?: string; // Где находится, если не в кабинете
+  totalStudySeconds: number;
+  currentLocationStatus?: string;
   lastLocationTime?: string;
 }
 
-/**
- * Код класса для регистрации (многоразовый для всех учеников этого класса!)
- * + индивидуальные коды кураторов
- */
 export interface ClassAccessConfig {
   classId: ClassId;
-  studentJoinCode: string; // Общий код класса от Завуча (все ученики класса могут регаться по нему!)
-  curatorJoinCode: string; // Код для регистрации куратора этого класса
-  boardQrKey: string; // Общий QR-ключ на доске для занятия места в классе
+  studentJoinCode: string;
+  curatorJoinCode: string;
+  boardQrKey: string;
 }
 
 export interface AwayCheckinMessage {
@@ -62,7 +60,7 @@ export interface AwayCheckinMessage {
   userName: string;
   userRole: UserRole;
   classId: ClassId;
-  locationLabel: string; // Например: "В библиотеке", "Медпункт", "В общежитии"
+  locationLabel: string;
   message: string;
   createdAt: string;
   timestamp: number;
@@ -84,9 +82,9 @@ export interface DeskOccupant {
 }
 
 export interface Desk {
-  deskNumber: number; // 1..12
-  row: number; // 1..3
-  col: number; // 1..4
+  deskNumber: number; // 1..24
+  row: number; // 1..4
+  col: number; // 1..6
   occupant: DeskOccupant | null;
 }
 
@@ -118,14 +116,14 @@ export interface ClassroomData {
   classId: ClassId;
   roomName: string;
   curatorName: string;
-  qrToken: string; // Общий QR-ключ на доске для посадки
+  qrToken: string;
   desks: Desk[];
   homework: HomeworkItem[];
 }
 
 export interface AppState {
   version: number;
-  etudeModeActive: boolean; // Обязательный Этюд 19:00 - 20:30
+  etudeModeActive: boolean;
   users: UserAccount[];
   classAccess: Record<ClassId, ClassAccessConfig>;
   classrooms: Record<ClassId, ClassroomData>;
@@ -134,8 +132,9 @@ export interface AppState {
   lastUpdated: number;
 }
 
-const STORAGE_KEY = 'studydesk_live_v4_etude';
-const SESSION_USER_KEY = 'studydesk_live_session_v4';
+const STORAGE_KEY = 'studydesk_school_prod_v5';
+const SESSION_USER_KEY = 'studydesk_school_session_v5';
+const URL_SCANNED_TOKEN_KEY = 'studydesk_scanned_qr_token_v5';
 
 export const AWAY_LOCATIONS = [
   'В библиотеке',
@@ -147,13 +146,44 @@ export const AWAY_LOCATIONS = [
   'Опаздываю на 5–10 мин',
 ];
 
-function createEmptyDesks(): Desk[] {
+/**
+ * Форматирует имя ученика строго как "Имя Ф." (Имя полностью, фамилия — только первая буква с точкой).
+ */
+export function formatStudentShortName(
+  firstNameInput: string,
+  lastInitialInput?: string
+): string {
+  const cleanFirst = firstNameInput.trim();
+  if (!cleanFirst) return 'Ученик';
+
+  if (lastInitialInput && lastInitialInput.trim()) {
+    const initial = lastInitialInput.trim().charAt(0).toUpperCase();
+    const firstWord = cleanFirst.split(/\s+/)[0];
+    const capFirst =
+      firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
+    return `${capFirst} ${initial}.`;
+  }
+
+  // Если передана строка из двух слов ("Алихан Мусапиров" или "Алихан М.")
+  const parts = cleanFirst.split(/\s+/).filter(Boolean);
+  const firstWord =
+    parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  if (parts.length >= 2) {
+    const secondInitial = parts[1].replace(/\./g, '').charAt(0).toUpperCase();
+    if (secondInitial) {
+      return `${firstWord} ${secondInitial}.`;
+    }
+  }
+  return firstWord;
+}
+
+function createEmptyDesks(count = DESKS_PER_CLASS): Desk[] {
   const desks: Desk[] = [];
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < count; i++) {
     desks.push({
       deskNumber: i + 1,
-      row: Math.floor(i / 4) + 1,
-      col: (i % 4) + 1,
+      row: Math.floor(i / 6) + 1,
+      col: (i % 6) + 1,
       occupant: null,
     });
   }
@@ -215,42 +245,16 @@ export const DEFAULT_QR_TOKENS: Record<ClassId, string> = {
 function getInitialState(): AppState {
   const now = Date.now();
 
+  // Чистая школьная база: изначально только Завуч/Админ, никаких фейковых учеников
   const users: UserAccount[] = [
     {
       id: 'usr-host',
       username: 'zavuch',
       password: 'admin',
-      fullName: 'Ахметова С. К. (Завуч / Админ)',
+      fullName: 'Завуч Школы',
       role: 'host',
       classId: '11A',
       totalStudySeconds: 0,
-    },
-    {
-      id: 'usr-admin',
-      username: 'admin',
-      password: 'admin',
-      fullName: 'Главный Администратор (Завуч)',
-      role: 'host',
-      classId: '11A',
-      totalStudySeconds: 0,
-    },
-    {
-      id: 'usr-curator-11a',
-      username: 'curator11a',
-      password: '1234',
-      fullName: 'Касымов Т. Б.',
-      role: 'curator',
-      classId: '11A',
-      totalStudySeconds: 0,
-    },
-    {
-      id: 'usr-student-11a',
-      username: 'student11a',
-      password: '1234',
-      fullName: 'Нурланова Амина',
-      role: 'student',
-      classId: '11A',
-      totalStudySeconds: 5400, // 90 мин в копилке для старта рейтинга
     },
   ];
 
@@ -268,30 +272,15 @@ function getInitialState(): AppState {
     classrooms[cid] = {
       classId: cid,
       roomName: ROOM_NUMBERS[cid],
-      curatorName: cid === '11A' ? 'Касымов Т. Б.' : `Куратор ${cid}`,
+      curatorName: 'Не назначен',
       qrToken: DEFAULT_QR_TOKENS[cid],
-      desks: createEmptyDesks(),
-      homework:
-        cid === '11A'
-          ? [
-              {
-                id: 'hw-11a-1',
-                classId: '11A',
-                subject: 'Этюд (19:00–20:30) • Алгебра',
-                description:
-                  'Обязательная самоподготовка: Параграф 14, задачи №14.1 – 14.8.',
-                deadline: 'Сегодня, 20:30',
-                pinned: true,
-                createdAt: '18:50',
-                authorName: 'Касымов Т. Б.',
-              },
-            ]
-          : [],
+      desks: createEmptyDesks(DESKS_PER_CLASS),
+      homework: [],
     };
   });
 
   return {
-    version: 4,
+    version: 5,
     etudeModeActive: true,
     users,
     classAccess,
@@ -302,7 +291,10 @@ function getInitialState(): AppState {
   };
 }
 
-export function getLiveElapsedSeconds(occupant: DeskOccupant, now = Date.now()): number {
+export function getLiveElapsedSeconds(
+  occupant: DeskOccupant,
+  now = Date.now()
+): number {
   if (!occupant.timerRunning || !occupant.lastTimerStart) {
     return occupant.accumulatedSeconds;
   }
@@ -344,6 +336,13 @@ class StorageService {
 
   constructor() {
     if (typeof window !== 'undefined') {
+      // Сохраняем QR-токен из URL, если ученик отсканировал реальный QR-код камерой телефона
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, urlToken.trim().toUpperCase());
+      }
+
       window.addEventListener('storage', (event: StorageEvent) => {
         if (event.key === STORAGE_KEY && event.newValue) {
           try {
@@ -355,12 +354,22 @@ class StorageService {
         }
       });
 
-      // Первичная синхронизация и периодический опрос облачной БД Supabase (для работы между разными телефонами и ПК)
       this.syncFromCloud();
       setInterval(() => {
         this.syncFromCloud();
-      }, 2500);
+      }, 2000);
     }
+  }
+
+  public getScannedTokenFromUrl(): string | null {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get('token');
+    if (fromUrl) {
+      sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, fromUrl.trim().toUpperCase());
+      return fromUrl.trim().toUpperCase();
+    }
+    return sessionStorage.getItem(URL_SCANNED_TOKEN_KEY);
   }
 
   public getCloudStatus(): {
@@ -372,6 +381,28 @@ class StorageService {
       return { status: 'local', error: null };
     }
     return { status: this.cloudSyncStatus, error: this.lastCloudError };
+  }
+
+  private ensure24Desks(state: AppState): AppState {
+    CLASS_IDS.forEach((cid) => {
+      const room = state.classrooms[cid];
+      if (room && room.desks.length < DESKS_PER_CLASS) {
+        for (let i = room.desks.length; i < DESKS_PER_CLASS; i++) {
+          room.desks.push({
+            deskNumber: i + 1,
+            row: Math.floor(i / 6) + 1,
+            col: (i % 6) + 1,
+            occupant: null,
+          });
+        }
+      }
+      // Пересчитываем ряды по 6 парт
+      room?.desks.forEach((d, idx) => {
+        d.row = Math.floor(idx / 6) + 1;
+        d.col = (idx % 6) + 1;
+      });
+    });
+    return state;
   }
 
   public async syncFromCloud(forcePushIfEmpty = false): Promise<{
@@ -397,8 +428,7 @@ class StorageService {
     this.lastCloudError = null;
 
     const local = this.getState();
-    if (!res.data) {
-      // Если в облачной таблице ещё нет записи — загружаем туда текущую базу школы
+    if (!res.data || res.data.version !== 5) {
       if (forcePushIfEmpty || true) {
         const pushRes = await pushCloudState(local);
         if (!pushRes.ok) {
@@ -411,8 +441,8 @@ class StorageService {
       return { ok: true };
     }
 
-    const remote = res.data;
-    if (remote && remote.lastUpdated && remote.lastUpdated > local.lastUpdated) {
+    const remote = this.ensure24Desks(res.data);
+    if (remote && remote.lastUpdated && remote.lastUpdated >= local.lastUpdated) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
       this.notifyListeners(remote);
     }
@@ -428,12 +458,12 @@ class StorageService {
         return initial;
       }
       const parsed = JSON.parse(raw) as AppState;
-      if (!parsed.classAccess || parsed.version !== 4) {
+      if (!parsed.classAccess || parsed.version !== 5) {
         const initial = getInitialState();
         this.saveState(initial, false);
         return initial;
       }
-      return parsed;
+      return this.ensure24Desks(parsed);
     } catch {
       return getInitialState();
     }
@@ -446,7 +476,6 @@ class StorageService {
       this.notifyListeners(state);
     }
 
-    // Если подключена облачная БД Supabase — мгновенно отправляем обновление в облако
     const cfg = getCloudConfig();
     if (cfg.enabled && cfg.supabaseUrl && cfg.supabaseAnonKey) {
       pushCloudState(state).then((res) => {
@@ -490,7 +519,10 @@ class StorageService {
     }
   }
 
-  public login(username: string, password: string): { user?: UserAccount; error?: string } {
+  public login(
+    username: string,
+    password: string
+  ): { user?: UserAccount; error?: string } {
     const state = this.getState();
     const cleanUser = username.trim().toLowerCase();
     const matched = state.users.find(
@@ -503,31 +535,33 @@ class StorageService {
     return { user: matched };
   }
 
-  /**
-   * МНОГОРАЗОВАЯ регистрация учеников по коду класса от Завуча (и регистрация куратора по коду куратора).
-   * Теперь в один класс может зарегистрироваться сколько угодно учеников (каждый со своим логином)!
-   */
   public registerWithClassCode(params: {
     username: string;
     accessCode: string;
-    fullName: string;
+    firstName: string;
+    lastInitial: string;
     password: string;
   }): { user?: UserAccount; error?: string } {
     const state = this.getState();
     const cleanUsername = params.username.trim().toLowerCase();
     const cleanCode = params.accessCode.trim().toUpperCase();
 
-    if (!cleanUsername || !cleanCode || !params.fullName.trim() || !params.password) {
+    if (
+      !cleanUsername ||
+      !cleanCode ||
+      !params.firstName.trim() ||
+      !params.lastInitial.trim() ||
+      !params.password
+    ) {
       return { error: 'Пожалуйста, заполните все поля.' };
     }
 
     if (state.users.some((u) => u.username.toLowerCase() === cleanUsername)) {
       return {
-        error: `Логин "${cleanUsername}" уже занят другим пользователем. Придумайте свой личный логин (например, ваше имя).`,
+        error: `Логин "${cleanUsername}" уже занят. Выберите другой логин.`,
       };
     }
 
-    // Ищем, какому классу принадлежит введённый код (многоразовый код ученика ИЛИ код куратора ИЛИ QR-ключ доски)
     let matchedClass: ClassId | null = null;
     let matchedRole: 'student' | 'curator' = 'student';
 
@@ -551,28 +585,31 @@ class StorageService {
 
     if (!matchedClass) {
       return {
-        error:
-          'Код класса не найден в базе Завуча. Проверьте код (например: 7A-1001, 10B-1071, 11A-1081).',
+        error: 'Код класса не найден. Уточните код у вашего куратора или завуча.',
       };
     }
 
-    // Если регистрируется куратор, проверяем, нет ли уже куратора у этого класса
     if (matchedRole === 'curator') {
       const existingCurator = state.users.find(
         (u) => u.role === 'curator' && u.classId === matchedClass
       );
       if (existingCurator) {
         return {
-          error: `У класса ${matchedClass} уже зарегистрирован куратор (${existingCurator.fullName}). Один куратор — только на один класс.`,
+          error: `У класса ${matchedClass} уже зарегистрирован куратор (${existingCurator.fullName}).`,
         };
       }
     }
 
+    const formattedName = formatStudentShortName(
+      params.firstName,
+      params.lastInitial
+    );
+
     const newUser: UserAccount = {
-      id: `usr-${Date.now()}`,
+      id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
       username: cleanUsername,
       password: params.password,
-      fullName: params.fullName.trim(),
+      fullName: formattedName,
       role: matchedRole,
       classId: matchedClass,
       totalStudySeconds: 0,
@@ -588,11 +625,9 @@ class StorageService {
     return { user: newUser };
   }
 
-  /**
-   * Завуч (Админ) может напрямую создать любого пользователя (Ученика, Куратора или Завуча)
-   */
   public adminCreateUser(params: {
-    fullName: string;
+    firstName: string;
+    lastInitial: string;
     username: string;
     password: string;
     role: UserRole;
@@ -600,18 +635,23 @@ class StorageService {
   }): { error?: string } {
     const state = this.getState();
     const cleanUsername = params.username.trim().toLowerCase();
-    if (!cleanUsername || !params.password.trim() || !params.fullName.trim()) {
-      return { error: 'Заполните ФИО, логин и пароль.' };
+    if (!cleanUsername || !params.password.trim() || !params.firstName.trim()) {
+      return { error: 'Заполните Имя, логин и пароль.' };
     }
     if (state.users.some((u) => u.username.toLowerCase() === cleanUsername)) {
       return { error: 'Пользователь с таким логином уже существует.' };
     }
 
+    const formattedName = formatStudentShortName(
+      params.firstName,
+      params.lastInitial
+    );
+
     const newUser: UserAccount = {
       id: `usr-${Date.now()}`,
       username: cleanUsername,
       password: params.password.trim(),
-      fullName: params.fullName.trim(),
+      fullName: formattedName,
       role: params.role,
       classId: params.classId,
       totalStudySeconds: 0,
@@ -629,7 +669,6 @@ class StorageService {
   public adminDeleteUser(userId: string): void {
     const state = this.getState();
     state.users = state.users.filter((u) => u.id !== userId);
-    // Убираем с парты, если сидел
     CLASS_IDS.forEach((cid) => {
       state.classrooms[cid].desks.forEach((d) => {
         if (d.occupant && d.occupant.studentId === userId) {
@@ -637,18 +676,6 @@ class StorageService {
         }
       });
     });
-    this.saveState(state);
-  }
-
-  public adminUpdateClassCodes(
-    classId: ClassId,
-    studentJoinCode: string,
-    curatorJoinCode: string
-  ): void {
-    const state = this.getState();
-    if (!state.classAccess[classId]) return;
-    state.classAccess[classId].studentJoinCode = studentJoinCode.trim().toUpperCase();
-    state.classAccess[classId].curatorJoinCode = curatorJoinCode.trim().toUpperCase();
     this.saveState(state);
   }
 
@@ -662,7 +689,7 @@ class StorageService {
     const state = this.getState();
     const room = state.classrooms[classId];
     if (!room) return;
-    const randomNum = Math.floor(100 + Math.random() * 900);
+    const randomNum = Math.floor(1000 + Math.random() * 9000);
     const newKey = `KEY-${classId}-${randomNum}`;
     room.qrToken = newKey;
     if (state.classAccess[classId]) {
@@ -675,9 +702,6 @@ class StorageService {
     sessionStorage.removeItem(SESSION_USER_KEY);
   }
 
-  /**
-   * Отметка ученика в чате «Где я сейчас (если не в классе)»
-   */
   public postAwayStatus(params: {
     user: UserAccount;
     locationLabel: string;
@@ -700,7 +724,7 @@ class StorageService {
     state.awayMessages.unshift({
       id: `msg-${now}`,
       userId: params.user.id,
-      userName: params.user.fullName,
+      userName: formatStudentShortName(params.user.fullName),
       userRole: params.user.role,
       classId: params.user.classId,
       locationLabel: params.locationLabel,
@@ -712,7 +736,6 @@ class StorageService {
     this.saveState(state);
   }
 
-  // Посадка ученика за парту по общему QR-ключу доски
   public occupyDeskAfterQR(params: {
     user: UserAccount;
     classId: ClassId;
@@ -729,16 +752,20 @@ class StorageService {
     const shortDigits = expectedToken.split('-').pop() || expectedToken;
 
     if (
-      cleanToken !== expectedToken &&
-      cleanToken !== shortDigits &&
-      !cleanToken.includes(expectedToken)
+      !cleanToken ||
+      (cleanToken !== expectedToken &&
+        cleanToken !== shortDigits &&
+        !cleanToken.includes(expectedToken))
     ) {
       return {
-        error: `Неверный ключ доски. Отсканируйте общий QR-код на доске или введите ключ ${room.qrToken}.`,
+        error:
+          'Неверный QR-ключ! Отсканируйте реальный QR-код на доске куратора камерой телефона или введите актуальный ключ с доски.',
       };
     }
 
-    // Если ученик уже сидел за другой партой — сохраняем его время в копилку и освобождаем
+    // Сохраняем токен в сессии, чтобы ученик мог пересесть без повторного ввода, пока куратор не сменил код
+    sessionStorage.setItem(URL_SCANNED_TOKEN_KEY, expectedToken);
+
     CLASS_IDS.forEach((cid) => {
       state.classrooms[cid].desks.forEach((d) => {
         if (d.occupant && d.occupant.studentId === params.user.id) {
@@ -752,7 +779,9 @@ class StorageService {
       });
     });
 
-    const targetDesk = room.desks.find((d) => d.deskNumber === params.deskNumber);
+    const targetDesk = room.desks.find(
+      (d) => d.deskNumber === params.deskNumber
+    );
     if (!targetDesk) return { error: 'Парта не найдена.' };
     if (targetDesk.occupant) {
       return {
@@ -767,12 +796,13 @@ class StorageService {
       hour12: false,
     });
 
-    const cleanSubject = params.subject.trim() || 'Самостоятельная работа (Этюд)';
+    const cleanSubject = params.subject.trim() || 'Самоподготовка (Этюд)';
+    const shortName = formatStudentShortName(params.user.fullName);
 
     const occupant: DeskOccupant = {
       studentId: params.user.id,
       studentUsername: params.user.username,
-      studentName: params.user.fullName,
+      studentName: shortName,
       classId: params.classId,
       deskNumber: params.deskNumber,
       subject: cleanSubject,
@@ -786,7 +816,6 @@ class StorageService {
 
     targetDesk.occupant = occupant;
 
-    // Обновляем локацию ученика на "В кабинете за партой"
     const usr = state.users.find((u) => u.id === params.user.id);
     if (usr) {
       usr.currentLocationStatus = `В классе ${params.classId} (Парта №${params.deskNumber})`;
@@ -799,7 +828,7 @@ class StorageService {
     const newLog: StudyLogEntry = {
       id: `log-${params.user.id}-${now}`,
       studentId: params.user.id,
-      studentName: params.user.fullName,
+      studentName: shortName,
       classId: params.classId,
       deskNumber: params.deskNumber,
       arrivedAt: timeStr,
@@ -825,14 +854,19 @@ class StorageService {
       state.classrooms[cid].desks.forEach((d) => {
         if (d.occupant && d.occupant.studentId === studentId) {
           if (d.occupant.timerRunning) {
-            d.occupant.accumulatedSeconds = getLiveElapsedSeconds(d.occupant, now);
+            d.occupant.accumulatedSeconds = getLiveElapsedSeconds(
+              d.occupant,
+              now
+            );
             d.occupant.lastTimerStart = null;
             d.occupant.timerRunning = false;
           } else {
             d.occupant.lastTimerStart = now;
             d.occupant.timerRunning = true;
           }
-          const log = state.studyLogs.find((l) => l.studentId === studentId && l.active);
+          const log = state.studyLogs.find(
+            (l) => l.studentId === studentId && l.active
+          );
           if (log) {
             log.totalSeconds = d.occupant.accumulatedSeconds;
           }
@@ -844,12 +878,14 @@ class StorageService {
 
   public changeStudentSubject(studentId: string, newSubject: string): void {
     const state = this.getState();
-    const clean = newSubject.trim() || 'Самостоятельная работа';
+    const clean = newSubject.trim() || 'Самоподготовка';
     CLASS_IDS.forEach((cid) => {
       state.classrooms[cid].desks.forEach((d) => {
         if (d.occupant && d.occupant.studentId === studentId) {
           d.occupant.subject = clean;
-          const log = state.studyLogs.find((l) => l.studentId === studentId && l.active);
+          const log = state.studyLogs.find(
+            (l) => l.studentId === studentId && l.active
+          );
           if (log) {
             log.subject = clean;
           }
@@ -871,7 +907,9 @@ class StorageService {
             usr.totalStudySeconds = (usr.totalStudySeconds || 0) + finalSecs;
             usr.currentLocationStatus = 'Завершил занятие';
           }
-          const log = state.studyLogs.find((l) => l.studentId === studentId && l.active);
+          const log = state.studyLogs.find(
+            (l) => l.studentId === studentId && l.active
+          );
           if (log) {
             log.totalSeconds = finalSecs;
             log.active = false;
@@ -886,7 +924,9 @@ class StorageService {
 
   public confirmStudentPresence(classId: ClassId, deskNumber: number): void {
     const state = this.getState();
-    const desk = state.classrooms[classId]?.desks.find((d) => d.deskNumber === deskNumber);
+    const desk = state.classrooms[classId]?.desks.find(
+      (d) => d.deskNumber === deskNumber
+    );
     if (desk && desk.occupant) {
       desk.occupant.status = 'verified';
       const log = state.studyLogs.find(
@@ -919,11 +959,15 @@ class StorageService {
 
   public rejectStudentPresence(classId: ClassId, deskNumber: number): void {
     const state = this.getState();
-    const desk = state.classrooms[classId]?.desks.find((d) => d.deskNumber === deskNumber);
+    const desk = state.classrooms[classId]?.desks.find(
+      (d) => d.deskNumber === deskNumber
+    );
     if (desk && desk.occupant) {
       const studentId = desk.occupant.studentId;
       const finalSecs = getLiveElapsedSeconds(desk.occupant, Date.now());
-      const log = state.studyLogs.find((l) => l.studentId === studentId && l.active);
+      const log = state.studyLogs.find(
+        (l) => l.studentId === studentId && l.active
+      );
       if (log) {
         log.totalSeconds = finalSecs;
         log.active = false;
@@ -958,7 +1002,7 @@ class StorageService {
       deadline: params.deadline.trim() || 'Сегодня, 20:30',
       pinned: Boolean(params.pinned),
       createdAt: nowStr,
-      authorName: params.authorName,
+      authorName: formatStudentShortName(params.authorName),
     });
     this.saveState(state);
   }

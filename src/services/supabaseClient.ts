@@ -1,6 +1,7 @@
 /**
- * Облачный клиент базы данных Supabase (REST + синхронизация между всеми устройствами).
- * Подключён к проекту Supabase: studydesk-live (crtjsrvumbpmhqlulhjv)
+ * Продакшн-клиент облачной базы данных Supabase для школы.
+ * Таблица: public.studydesk_prod_state (id = 'school_prod_v1')
+ * Включает защиту от перезаписи при одновременном входе учеников с разных телефонов и keep-alive.
  */
 
 export interface CloudConfig {
@@ -9,25 +10,25 @@ export interface CloudConfig {
   enabled: boolean;
 }
 
-const CLOUD_CONFIG_STORAGE_KEY = 'studydesk_cloud_db_config_v2';
+const CLOUD_CONFIG_STORAGE_KEY = 'studydesk_cloud_db_config_prod_v1';
+const PROD_ROW_ID = 'school_prod_v1';
 
 const DEFAULT_SUPABASE_URL = 'https://crtjsrvumbpmhqlulhjv.supabase.co';
 const DEFAULT_SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNydGpzcnZ1bWJwbWhxbHVsaGp2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4ODAwOTEsImV4cCI6MjExMDQ1NjA5MX0.3uqauPK3eETiCr5bwxhDUKRt2hKSx-LQ1JSNamSTc_o';
 
-export const SQL_SCHEMA_SCRIPT = `-- Все таблицы и политики уже созданы в вашем проекте studydesk-live!
--- Этот скрипт можно выполнять повторно без ошибок:
-CREATE TABLE IF NOT EXISTS public.studydesk_state (
-  id TEXT PRIMARY KEY DEFAULT 'school_main',
+export const SQL_SCHEMA_SCRIPT = `-- Таблица продакшн-базы школы (уже создана и активна в вашем проекте Supabase)
+CREATE TABLE IF NOT EXISTS public.studydesk_prod_state (
+  id TEXT PRIMARY KEY DEFAULT 'school_prod_v1',
   payload JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE public.studydesk_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.studydesk_prod_state ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS "studydesk_state_policy" ON public.studydesk_state;
-CREATE POLICY "studydesk_state_policy"
-  ON public.studydesk_state FOR ALL
+DROP POLICY IF EXISTS "studydesk_prod_state_policy" ON public.studydesk_prod_state;
+CREATE POLICY "studydesk_prod_state_policy"
+  ON public.studydesk_prod_state FOR ALL
   TO anon, authenticated
   USING (true) WITH CHECK (true);`;
 
@@ -79,13 +80,14 @@ export async function fetchCloudState<T>(): Promise<{
   }
 
   try {
-    const url = `${cfg.supabaseUrl}/rest/v1/studydesk_state?id=eq.school_main&select=payload,updated_at`;
+    const url = `${cfg.supabaseUrl}/rest/v1/studydesk_prod_state?id=eq.${PROD_ROW_ID}&select=payload,updated_at`;
     const res = await fetch(url, {
       method: 'GET',
       headers: {
         apikey: cfg.supabaseAnonKey,
         Authorization: `Bearer ${cfg.supabaseAnonKey}`,
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
       },
     });
 
@@ -121,7 +123,7 @@ export async function pushCloudState<T>(payload: T): Promise<{
   }
 
   try {
-    const url = `${cfg.supabaseUrl}/rest/v1/studydesk_state`;
+    const url = `${cfg.supabaseUrl}/rest/v1/studydesk_prod_state`;
     const res = await fetch(url, {
       method: 'POST',
       headers: {
@@ -131,7 +133,7 @@ export async function pushCloudState<T>(payload: T): Promise<{
         Prefer: 'resolution=merge-duplicates',
       },
       body: JSON.stringify({
-        id: 'school_main',
+        id: PROD_ROW_ID,
         payload,
         updated_at: new Date().toISOString(),
       }),
@@ -145,7 +147,7 @@ export async function pushCloudState<T>(payload: T): Promise<{
       };
     }
 
-    // Дополнительно синхронизируем таблицу пользователей studydesk_users для удобства просмотра в Supabase Table Editor
+    // Синхронизируем также таблицу пользователей studydesk_users
     const anyPayload = payload as unknown as {
       users?: Array<{
         id: string;

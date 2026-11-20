@@ -13,7 +13,9 @@ import {
   AWAY_LOCATIONS,
   ClassId,
   CLASS_IDS,
+  DESKS_PER_CLASS,
   formatDuration,
+  formatStudentShortName,
   getStudentTotalStudySeconds,
   storageService,
   UserAccount,
@@ -36,26 +38,31 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
 }) => {
   const [selectedLocation, setSelectedLocation] = useState(AWAY_LOCATIONS[0]);
   const [chatMessage, setChatMessage] = useState('');
-  const [ratingTab, setRatingTab] = useState<'class' | 'school'>('class');
+  const [ratingTab, setRatingTab] = useState<'students' | 'classes'>('students');
 
-  // Ученики выбранного класса для Топ-рейтинга
-  const classStudents = state.users
-    .filter((u) => u.role === 'student' && u.classId === classId)
+  // ТОП-5 учеников
+  const targetStudentsPool = showAllClassesInChat
+    ? state.users.filter((u) => u.role === 'student')
+    : state.users.filter((u) => u.role === 'student' && u.classId === classId);
+
+  const top5Students = targetStudentsPool
     .map((u) => {
       const totalSecs = getStudentTotalStudySeconds(u, state, now);
-      const isSeated = state.classrooms[classId].desks.some(
+      const isSeated = state.classrooms[u.classId]?.desks.some(
         (d) => d.occupant && d.occupant.studentId === u.id
       );
       return {
         ...u,
+        shortName: formatStudentShortName(u.fullName),
         liveTotalSeconds: totalSecs,
         isSeated,
       };
     })
-    .sort((a, b) => b.liveTotalSeconds - a.liveTotalSeconds);
+    .sort((a, b) => b.liveTotalSeconds - a.liveTotalSeconds)
+    .slice(0, 5); // Строго ТОП-5 учеников!
 
-  // Рейтинг всех классов школы (7А–11Б)
-  const schoolClassesRanking = CLASS_IDS.map((cid) => {
+  // ТОП-5 классов школы (7А–11Б)
+  const top5Classes = CLASS_IDS.map((cid) => {
     const studentsOfClass = state.users.filter(
       (u) => u.role === 'student' && u.classId === cid
     );
@@ -72,7 +79,9 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
       studentsCount: studentsOfClass.length,
       seatedNow,
     };
-  }).sort((a, b) => b.totalSeconds - a.totalSeconds);
+  })
+    .sort((a, b) => b.totalSeconds - a.totalSeconds)
+    .slice(0, 5);
 
   const relevantMessages = showAllClassesInChat
     ? state.awayMessages
@@ -90,7 +99,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      {/* Левая колонка: Топ-рейтинг класса и школы */}
+      {/* Левая колонка: ТОП-5 учеников */}
       <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
         <div>
           <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between gap-2">
@@ -98,10 +107,10 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
               <Trophy className="w-5 h-5 text-amber-400" />
               <div>
                 <h3 className="text-sm font-bold tracking-tight">
-                  Топ-рейтинг учёбы и Этюда
+                  ТОП-5 Рейтинг учёбы на Этюде
                 </h3>
                 <p className="text-[11px] text-slate-400">
-                  Рейтинг по времени самоподготовки (19:00–20:30)
+                  Лучшие 5 учеников по времени самоподготовки (19:00–20:30)
                 </p>
               </div>
             </div>
@@ -109,37 +118,37 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
             <div className="flex bg-slate-800 p-1 rounded-lg text-xs font-semibold">
               <button
                 type="button"
-                onClick={() => setRatingTab('class')}
+                onClick={() => setRatingTab('students')}
                 className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                  ratingTab === 'class'
+                  ratingTab === 'students'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
-                Класс {classId}
+                ТОП-5 Учеников
               </button>
               <button
                 type="button"
-                onClick={() => setRatingTab('school')}
+                onClick={() => setRatingTab('classes')}
                 className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                  ratingTab === 'school'
+                  ratingTab === 'classes'
                     ? 'bg-indigo-600 text-white'
                     : 'text-slate-300 hover:text-white'
                 }`}
               >
-                Все классы
+                ТОП-5 Классов
               </button>
             </div>
           </div>
 
-          <div className="p-4 divide-y divide-slate-100 max-h-80 overflow-y-auto">
-            {ratingTab === 'class' ? (
-              classStudents.length === 0 ? (
+          <div className="p-4 divide-y divide-slate-100">
+            {ratingTab === 'students' ? (
+              top5Students.length === 0 ? (
                 <div className="py-8 text-center text-slate-400 text-xs">
-                  В классе {classId} пока нет зарегистрированных учеников.
+                  Пока нет зарегистрированных учеников для формирования ТОП-5.
                 </div>
               ) : (
-                classStudents.map((stu, idx) => {
+                top5Students.map((stu, idx) => {
                   const rank = idx + 1;
                   return (
                     <div
@@ -162,7 +171,10 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
                         </div>
                         <div>
                           <div className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-2">
-                            <span>{stu.fullName}</span>
+                            <span>{stu.shortName}</span>
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700">
+                              {stu.classId}
+                            </span>
                             {stu.isSeated && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                                 <CheckCircle2 className="w-3 h-3" />В классе
@@ -170,7 +182,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
                             )}
                           </div>
                           <div className="text-[11px] text-slate-500">
-                            {stu.currentLocationStatus || 'Статус не указан'}
+                            {stu.currentLocationStatus || 'Вне парты'}
                           </div>
                         </div>
                       </div>
@@ -181,7 +193,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
                           {formatDuration(stu.liveTotalSeconds)}
                         </div>
                         <div className="text-[10px] text-slate-400">
-                          {Math.round(stu.liveTotalSeconds / 60)} мин всего
+                          {Math.round(stu.liveTotalSeconds / 60)} мин
                         </div>
                       </div>
                     </div>
@@ -189,28 +201,28 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
                 })
               )
             ) : (
-              schoolClassesRanking.map((item, idx) => (
+              top5Classes.map((item, idx) => (
                 <div
                   key={item.classId}
-                  className="py-2.5 px-2 flex items-center justify-between gap-3 hover:bg-slate-50 rounded-lg"
+                  className="py-3 px-2 flex items-center justify-between gap-3 hover:bg-slate-50 rounded-lg"
                 >
                   <div className="flex items-center gap-3">
                     <span
-                      className={`w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold ${
+                      className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold ${
                         idx === 0
-                          ? 'bg-amber-100 text-amber-700'
+                          ? 'bg-amber-100 text-amber-700 border border-amber-300'
                           : 'bg-slate-100 text-slate-600'
                       }`}
                     >
-                      {idx + 1}
+                      #{idx + 1}
                     </span>
                     <div>
                       <span className="text-sm font-bold text-slate-900">
                         Класс {item.classId}
                       </span>
                       <span className="text-xs text-slate-500 ml-2">
-                        (За партами: {item.seatedNow}/12 • Учеников:{' '}
-                        {item.studentsCount})
+                        (За партами: {item.seatedNow}/{DESKS_PER_CLASS} •
+                        Учеников: {item.studentsCount})
                       </span>
                     </div>
                   </div>
@@ -235,7 +247,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
         </div>
       </div>
 
-      {/* Правая колонка: Чат и отметка «Где я нахожусь (если не в классе)» */}
+      {/* Правая колонка: Чат-отметка «Где я нахожусь (если не в классе)» */}
       <div className="lg:col-span-6 bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col justify-between">
         <div>
           <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between gap-2">
@@ -243,7 +255,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
               <MapPin className="w-5 h-5 text-emerald-400" />
               <div>
                 <h3 className="text-sm font-bold tracking-tight">
-                  Чат-отметка: Где я нахожусь (если вне класса)
+                  Отметка локации: Где я нахожусь (если вне класса)
                 </h3>
                 <p className="text-[11px] text-slate-400">
                   Если вы не в кабинете на Этюде (19:00–20:30), отметьтесь здесь
@@ -251,11 +263,10 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
               </div>
             </div>
             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono bg-slate-800 text-slate-300">
-              {relevantMessages.length} сообщ.
+              {relevantMessages.length}
             </span>
           </div>
 
-          {/* Форма отправки локации и сообщения */}
           <form
             onSubmit={handleSendStatus}
             className="p-4 bg-slate-50 border-b border-slate-200 space-y-3"
@@ -280,14 +291,14 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
 
               <div className="sm:col-span-7">
                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-                  Комментарий для куратора / класса
+                  Комментарий для куратора
                 </label>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={chatMessage}
                     onChange={(e) => setChatMessage(e.target.value)}
-                    placeholder="Напр.: В кабинете физики у учителя до 19:45..."
+                    placeholder="Напишите причину или кабинет..."
                     className="flex-1 px-3 py-2 rounded-lg bg-white border border-slate-300 text-xs text-slate-900 focus:outline-none focus:border-indigo-600"
                   />
                   <button
@@ -302,14 +313,11 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
             </div>
           </form>
 
-          {/* Лента сообщений */}
           <div className="p-4 space-y-2.5 max-h-60 overflow-y-auto">
             {relevantMessages.length === 0 ? (
               <div className="py-8 text-center text-slate-400 text-xs flex flex-col items-center gap-1.5">
                 <MessageSquare className="w-5 h-5 text-slate-300" />
-                <span>
-                  Пока никто не отмечался вне кабинета. Все сообщения появятся здесь мгновенно.
-                </span>
+                <span>Пока никто не отмечался вне кабинета.</span>
               </div>
             ) : (
               relevantMessages.map((msg) => (
@@ -320,7 +328,7 @@ export const ClassRatingAndAwayPanel: React.FC<ClassRatingAndAwayPanelProps> = (
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-xs font-bold text-slate-900">
-                        {msg.userName}
+                        {formatStudentShortName(msg.userName)}
                       </span>
                       <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                         {msg.classId}
