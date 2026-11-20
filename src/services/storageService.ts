@@ -1,4 +1,6 @@
 import {
+  CloudUserRow,
+  deleteCloudUserById,
   fetchCloudState,
   getCloudConfig,
   pushCloudState,
@@ -31,7 +33,7 @@ export const CLASS_IDS: ClassId[] = [
   '11B',
 ];
 
-export const DESKS_PER_CLASS = 24; // 24 парты в каждом кабинете (4 ряда по 6 парт)
+export const DESKS_PER_CLASS = 24;
 
 export type VerificationStatus = 'pending' | 'verified';
 
@@ -39,7 +41,7 @@ export interface UserAccount {
   id: string;
   username: string;
   password: string;
-  fullName: string; // Хранится в формате "Имя Ф."
+  fullName: string;
   role: UserRole;
   classId: ClassId;
   totalStudySeconds: number;
@@ -83,9 +85,9 @@ export interface DeskOccupant {
 }
 
 export interface Desk {
-  deskNumber: number; // 1..24
-  row: number; // 1..4
-  col: number; // 1..6
+  deskNumber: number;
+  row: number;
+  col: number;
   occupant: DeskOccupant | null;
 }
 
@@ -124,7 +126,7 @@ export interface ClassroomData {
 
 export interface AppState {
   version: number;
-  lastQrDate: string; // YYYY-MM-DD для ежедневной авто-смены QR-кодов
+  lastQrDate: string;
   etudeModeActive: boolean;
   users: UserAccount[];
   classAccess: Record<ClassId, ClassAccessConfig>;
@@ -136,7 +138,11 @@ export interface AppState {
 
 const STORAGE_KEY = 'studydesk_school_prod_v6';
 const SESSION_USER_KEY = 'studydesk_school_session_v6';
+const PERSISTENT_USER_KEY = 'studydesk_school_remembered_user_v6';
 const URL_SCANNED_TOKEN_KEY = 'studydesk_scanned_qr_token_v6';
+
+// Исключаем только 2 старых демо-аккаунта, а всех реальных зарегистрированных учеников и кураторов сохраняем навсегда
+const LEGACY_DEMO_IDS = new Set(['usr-student-11a', 'usr-curator-11a']);
 
 export const AWAY_LOCATIONS = [
   'В библиотеке',
@@ -148,9 +154,6 @@ export const AWAY_LOCATIONS = [
   'Опаздываю на 5–10 мин',
 ];
 
-/**
- * Возвращает текущую дату YYYY-MM-DD по локальному времени школы.
- */
 export function getTodayDateKey(): string {
   const d = new Date();
   const year = d.getFullYear();
@@ -159,9 +162,6 @@ export function getTodayDateKey(): string {
   return `${year}-${month}-${day}`;
 }
 
-/**
- * Генерирует уникальный ежедневный QR-ключ для класса на основе текущей даты (меняется каждый день автоматически!).
- */
 export function computeDailyQrToken(
   classId: ClassId,
   dateKey = getTodayDateKey(),
@@ -177,9 +177,6 @@ export function computeDailyQrToken(
   return `KEY-${classId}-${fourDigits}`;
 }
 
-/**
- * Форматирует имя ученика строго как "Имя Ф." (Имя полностью, фамилия — только первая буква с точкой).
- */
 export function formatStudentShortName(
   firstNameInput: string,
   lastInitialInput?: string
@@ -190,14 +187,12 @@ export function formatStudentShortName(
   if (lastInitialInput && lastInitialInput.trim()) {
     const initial = lastInitialInput.trim().charAt(0).toUpperCase();
     const firstWord = cleanFirst.split(/\s+/)[0];
-    const capFirst =
-      firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
+    const capFirst = firstWord.charAt(0).toUpperCase() + firstWord.slice(1);
     return `${capFirst} ${initial}.`;
   }
 
   const parts = cleanFirst.split(/\s+/).filter(Boolean);
-  const firstWord =
-    parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+  const firstWord = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
   if (parts.length >= 2) {
     const secondInitial = parts[1].replace(/\./g, '').charAt(0).toUpperCase();
     if (secondInitial) {
@@ -260,7 +255,6 @@ export const DEFAULT_CURATOR_CLASS_CODES: Record<ClassId, string> = {
 };
 
 function getInitialState(): AppState {
-  const now = Date.now();
   const todayKey = getTodayDateKey();
 
   const users: UserAccount[] = [
@@ -307,7 +301,8 @@ function getInitialState(): AppState {
     classrooms,
     awayMessages: [],
     studyLogs: [],
-    lastUpdated: now,
+    // ВАЖНО: lastUpdated = 0 у пустого шаблона, чтобы новый телефон или вкладка ВСЕГДА загружали базу из облака Supabase, а не перезаписывали её!
+    lastUpdated: 0,
   };
 }
 
@@ -409,15 +404,91 @@ class StorageService {
   }
 
   /**
-   * Проверяет и автоматически обновляет QR-коды всех классов, если наступил новый день,
-   * а также гарантирует наличие 24 парт в каждом классе.
+   * Объединяет пользователей из постоянной таблицы Supabase studydesk_users с состоянием приложения,
+   * чтобы ни один зарегистрированный аккаунт никогда не исчезал.
    */
+  private mergeUsersIntoState(
+    state: AppState,
+    cloudUsers: CloudUserRow[] = []
+  ): AppState {
+    const byUsername = new Map<string, UserAccount>();
+
+    // Сначала берем пользователей из текущего состояния (кроме старых демо)
+    state.users.forEach((u) => {
+      if (!LEGACY_DEMO_IDS.has(u.id)) {
+        byUsername.set(u.username.toLowerCase(), {
+          ...u,
+          fullName: formatStudentShortName(u.fullName),
+        });
+      }
+    });
+
+    // Затем добавляем всех пользователей из таблицы studydesk_users в Supabase
+    cloudUsers.forEach((row) => {
+      if (LEGACY_DEMO_IDS.has(row.id)) return;
+      const key = row.username.toLowerCase();
+      const existing = byUsername.get(key);
+      const validClass = (
+        CLASS_IDS.includes(row.class_id as ClassId) ? row.class_id : '11A'
+      ) as ClassId;
+
+      if (!existing) {
+        byUsername.set(key, {
+          id: row.id,
+          username: row.username,
+          password: row.password,
+          fullName: formatStudentShortName(row.full_name),
+          role: row.role,
+          classId: validClass,
+          totalStudySeconds: row.total_study_seconds || 0,
+          currentLocationStatus: row.current_location_status || undefined,
+          lastLocationTime: row.last_location_time || undefined,
+        });
+      } else {
+        existing.totalStudySeconds = Math.max(
+          existing.totalStudySeconds || 0,
+          row.total_study_seconds || 0
+        );
+      }
+    });
+
+    // Гарантируем наличие аккаунта Завуча
+    if (!byUsername.has('zavuch')) {
+      byUsername.set('zavuch', {
+        id: 'usr-host',
+        username: 'zavuch',
+        password: 'admin',
+        fullName: 'Завуч Ш.',
+        role: 'host',
+        classId: '11A',
+        totalStudySeconds: 0,
+      });
+    }
+
+    state.users = Array.from(byUsername.values());
+
+    // Проставляем имена кураторов в их классы
+    state.users.forEach((u) => {
+      if (u.role === 'curator' && state.classrooms[u.classId]) {
+        state.classrooms[u.classId].curatorName = formatStudentShortName(
+          u.fullName
+        );
+      }
+    });
+
+    return state;
+  }
+
   private normalizeAndRotateDailyQR(state: AppState): AppState {
     const todayKey = getTodayDateKey();
     const dateChanged = state.lastQrDate !== todayKey;
 
     if (dateChanged) {
       state.lastQrDate = todayKey;
+    }
+
+    if (!state.classAccess) {
+      state.classAccess = getInitialState().classAccess;
     }
 
     CLASS_IDS.forEach((cid) => {
@@ -451,7 +522,7 @@ class StorageService {
     return state;
   }
 
-  public async syncFromCloud(forcePushIfEmpty = false): Promise<{
+  public async syncFromCloud(forcePush = false): Promise<{
     ok: boolean;
     error?: string;
   }> {
@@ -474,28 +545,46 @@ class StorageService {
     this.lastCloudError = null;
 
     const local = this.getState();
-    if (!res.data || res.data.version !== 6) {
-      if (forcePushIfEmpty || true) {
-        const pushRes = await pushCloudState(local);
-        if (!pushRes.ok) {
-          this.cloudSyncStatus = 'error';
-          this.lastCloudError = pushRes.error || 'Ошибка записи';
-          return { ok: false, error: pushRes.error };
-        }
-      }
-      this.notifyListeners(local);
+    const cloudUsers = res.users || [];
+
+    if (!res.data) {
+      // В studydesk_prod_state еще пусто — объединяем с пользователями из studydesk_users и сохраняем
+      const mergedInitial = this.normalizeAndRotateDailyQR(
+        this.mergeUsersIntoState(local, cloudUsers)
+      );
+      mergedInitial.lastUpdated = Date.now();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(mergedInitial));
+      await pushCloudState(mergedInitial);
+      this.notifyListeners(mergedInitial);
       return { ok: true };
     }
 
-    const remote = this.normalizeAndRotateDailyQR(res.data);
+    const remoteBase = this.normalizeAndRotateDailyQR(
+      this.mergeUsersIntoState(res.data, cloudUsers)
+    );
+
+    // Если в локальной памяти есть только что зарегистрированный пользователь — тоже сохраняем его
+    local.users.forEach((lu) => {
+      if (
+        !LEGACY_DEMO_IDS.has(lu.id) &&
+        !remoteBase.users.some(
+          (ru) => ru.username.toLowerCase() === lu.username.toLowerCase()
+        )
+      ) {
+        remoteBase.users.push(lu);
+      }
+    });
+
     if (
-      remote &&
-      remote.lastUpdated &&
-      remote.lastUpdated >= local.lastUpdated
+      forcePush ||
+      !local.lastUpdated ||
+      (remoteBase.lastUpdated || 0) >= local.lastUpdated ||
+      remoteBase.users.length > local.users.length
     ) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(remote));
-      this.notifyListeners(remote);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteBase));
+      this.notifyListeners(remoteBase);
     }
+
     return { ok: true };
   }
 
@@ -503,17 +592,20 @@ class StorageService {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) {
+        // НЕ вызываем saveState() при пустом localStorage, чтобы не перезаписать облачную БД!
         const initial = getInitialState();
-        this.saveState(initial, false);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
         return initial;
       }
       const parsed = JSON.parse(raw) as AppState;
-      if (!parsed.classAccess || parsed.version !== 6) {
+      if (!parsed.classrooms || !parsed.classrooms['11A']) {
         const initial = getInitialState();
-        this.saveState(initial, false);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
         return initial;
       }
-      return this.normalizeAndRotateDailyQR(parsed);
+      return this.normalizeAndRotateDailyQR(
+        this.mergeUsersIntoState(parsed, [])
+      );
     } catch {
       return getInitialState();
     }
@@ -557,18 +649,31 @@ class StorageService {
     return fresh;
   }
 
+  /**
+   * Память входа: сохраняет сессию и в sessionStorage (для разных вкладок), и в localStorage (чтобы не выбрасывало после перезагрузки или закрытия браузера).
+   */
   public getCurrentUser(): UserAccount | null {
     try {
-      const raw = sessionStorage.getItem(SESSION_USER_KEY);
+      const raw =
+        sessionStorage.getItem(SESSION_USER_KEY) ||
+        localStorage.getItem(PERSISTENT_USER_KEY);
       if (!raw) return null;
-      const sessionUser = JSON.parse(raw) as UserAccount;
+      const savedUser = JSON.parse(raw) as UserAccount;
       const state = this.getState();
       return (
-        state.users.find((u) => u.username === sessionUser.username) || null
+        state.users.find(
+          (u) => u.username.toLowerCase() === savedUser.username.toLowerCase()
+        ) || savedUser
       );
     } catch {
       return null;
     }
+  }
+
+  private rememberLoggedInUser(user: UserAccount): void {
+    const serialized = JSON.stringify(user);
+    sessionStorage.setItem(SESSION_USER_KEY, serialized);
+    localStorage.setItem(PERSISTENT_USER_KEY, serialized);
   }
 
   public login(
@@ -583,7 +688,7 @@ class StorageService {
     if (!matched) {
       return { error: 'Неверный логин или пароль.' };
     }
-    sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(matched));
+    this.rememberLoggedInUser(matched);
     return { user: matched };
   }
 
@@ -674,7 +779,7 @@ class StorageService {
 
     state.users.push(newUser);
     this.saveState(state);
-    sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(newUser));
+    this.rememberLoggedInUser(newUser);
     return { user: newUser };
   }
 
@@ -729,6 +834,7 @@ class StorageService {
         }
       });
     });
+    deleteCloudUserById(userId);
     this.saveState(state);
   }
 
@@ -753,6 +859,7 @@ class StorageService {
 
   public logout(): void {
     sessionStorage.removeItem(SESSION_USER_KEY);
+    localStorage.removeItem(PERSISTENT_USER_KEY);
   }
 
   public postAwayStatus(params: {
@@ -812,7 +919,7 @@ class StorageService {
     ) {
       return {
         error:
-          'Неверный QR-ключ! Отсканируйте реальный сегодняшней QR-код на доске куратора камерой или введите актуальный ключ с доски.',
+          'Неверный QR-ключ! Отсканируйте реальный сегодняшний QR-код на доске куратора камерой или введите актуальный ключ с доски.',
       };
     }
 

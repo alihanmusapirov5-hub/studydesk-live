@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   KeyRound,
   GraduationCap,
+  FolderKey,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -31,15 +32,17 @@ interface HostDashboardProps {
   user: UserAccount;
   state: AppState;
   now: number;
+  onOpenSecretPanel: () => void;
 }
 
 export const HostDashboard: React.FC<HostDashboardProps> = ({
   user,
   state,
   now,
+  onOpenSecretPanel,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [inspectedClassId, setInspectedClassId] = useState<ClassId>('11A');
+  const [inspectedClassId, setInspectedClassId] = useState<ClassId>('11B');
 
   // Overall: Сколько всего учеников зарегистрировано в школе
   const allSchoolStudents = state.users.filter((u) => u.role === 'student');
@@ -94,7 +97,7 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
                 Панель Завуча • Мониторинг школы и Этюда (19:00 – 20:30)
               </span>
               <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-500 text-slate-950">
-                ЗАВУЧ
+                ADMIN HOST
               </span>
             </div>
             <p className="text-xs text-slate-300 mt-0.5">
@@ -103,17 +106,28 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => storageService.toggleEtudeMode()}
-          className={`px-4 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
-            state.etudeModeActive
-              ? 'bg-emerald-600 text-white border-emerald-500'
-              : 'bg-slate-800 text-slate-300 border-slate-700'
-          }`}
-        >
-          Режим Этюда (19:00–20:30): {state.etudeModeActive ? 'АКТИВЕН' : 'ВЫКЛ'}
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={onOpenSecretPanel}
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md transition-colors cursor-pointer"
+          >
+            <FolderKey className="w-4 h-4" />
+            <span>Логины, пароли и коды классов ({state.users.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => storageService.toggleEtudeMode()}
+            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              state.etudeModeActive
+                ? 'bg-emerald-600 text-white border-emerald-500'
+                : 'bg-slate-800 text-slate-300 border-slate-700'
+            }`}
+          >
+            Этюд: {state.etudeModeActive ? 'ВКЛ' : 'ВЫКЛ'}
+          </button>
+        </div>
       </div>
 
       {/* 1. Overall метрики школы (включая общее количество учеников в школе) */}
@@ -216,7 +230,6 @@ export const HostDashboard: React.FC<HostDashboardProps> = ({
           </div>
         </div>
 
-        {/* Результаты глобального поиска ученика */}
         {trimmedSearch && (
           <div className="p-3.5 rounded-xl bg-indigo-50/50 border border-indigo-200 space-y-2">
             <div className="text-xs font-bold text-indigo-900">

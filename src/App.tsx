@@ -97,6 +97,7 @@ export function App() {
               user={currentUser}
               state={appState}
               now={now}
+              onOpenSecretPanel={() => setSecretPanelOpen(true)}
             />
           )}
         </main>
